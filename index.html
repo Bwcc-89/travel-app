@@ -1,0 +1,1893 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>旅遊小幫手 ✈️</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/google/open-location-code@1.0.4/js/src/openlocationcode.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
+  <style>
+    body { background-color: #3b5e55; font-family: "Helvetica Neue", Helvetica, "PingFang TC", "LiHei Pro", "Hiragino Sans GB", "Microsoft JhengHei", Arial, sans-serif; }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    .fade-enter-active, .fade-leave-active { transition: opacity 0.3s ease; }
+    .fade-enter-from, .fade-leave-to { opacity: 0; }
+    .leaflet-container { z-index: 10 !important; font-family: inherit; }
+    .modal-enter-active, .modal-leave-active { transition: all 0.3s ease; }
+    .modal-enter-from, .modal-leave-to { opacity: 0; transform: translateY(20px) scale(0.95); }
+    .sortable-ghost { opacity: 0.3; background-color: #e0f4ec; border-radius: 1rem; }
+    .drag-handle { touch-action: none; cursor: grab; }
+    .drag-handle:active { cursor: grabbing; }
+  </style>
+</head>
+<body class="flex justify-center h-screen w-full">
+
+<div id="app" class="w-full h-full max-w-md bg-white flex flex-col relative overflow-hidden shadow-2xl">
+  
+  <!-- 登入 / 註冊（僅在啟用 Firebase 時顯示） -->
+  <transition name="fade">
+    <div v-if="firebaseEnabled && !user && !authLoading" class="absolute inset-0 z-[60] bg-[#426b62] flex items-center justify-center p-5">
+      <div class="bg-white rounded-[2.5rem] p-8 w-full shadow-2xl max-h-[90vh] overflow-y-auto">
+        <div class="w-16 h-16 bg-[#e0f4ec] rounded-full flex items-center justify-center mx-auto mb-4 text-[#4b8f7e]">
+          <i class="fa-solid fa-user-circle text-2xl"></i>
+        </div>
+        <h2 class="text-xl font-black text-gray-800 text-center mb-1">{{ authMode === 'signin' ? '登入' : '註冊帳號' }}</h2>
+        <p class="text-xs text-gray-400 text-center mb-6">使用同一帳號可在不同裝置同步，並與朋友共享行程</p>
+        <div class="space-y-4">
+          <input v-model="authEmail" type="email" class="w-full border border-gray-200 rounded-xl p-3 text-gray-700 outline-none focus:border-[#4b8f7e] focus:ring-1 focus:ring-[#4b8f7e]" placeholder="Email">
+          <input v-if="authMode === 'signup'" v-model="authNickname" type="text" class="w-full border border-gray-200 rounded-xl p-3 text-gray-700 outline-none focus:border-[#4b8f7e] focus:ring-1 focus:ring-[#4b8f7e]" placeholder="暱稱（顯示在 App 裡）">
+          <input v-model="authPassword" type="password" class="w-full border border-gray-200 rounded-xl p-3 text-gray-700 outline-none focus:border-[#4b8f7e] focus:ring-1 focus:ring-[#4b8f7e]" placeholder="密碼">
+          <p v-if="authError" class="text-xs text-red-500">{{ authError }}</p>
+          <button @click="doAuth" :disabled="authLoadingBtn" class="w-full bg-[#4b8f7e] text-white rounded-2xl py-3 font-bold tracking-wider hover:bg-[#3d7567] transition disabled:opacity-50">
+            {{ authMode === 'signin' ? '登入' : '註冊' }}
+          </button>
+          <button @click="authMode = authMode === 'signin' ? 'signup' : 'signin'; authError = ''" class="w-full text-center text-gray-400 text-sm font-medium hover:text-gray-600">
+            {{ authMode === 'signin' ? '還沒有帳號？按此註冊' : '已有帳號？按此登入' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </transition>
+
+  <transition name="fade">
+    <div v-if="firebaseEnabled && authLoading" class="absolute inset-0 z-[60] bg-[#426b62] flex items-center justify-center">
+      <div class="text-white font-bold"><i class="fa-solid fa-spinner fa-spin mr-2"></i>載入中...</div>
+    </div>
+  </transition>
+
+  <transition name="fade">
+    <div v-if="appState === 'setup'" class="absolute inset-0 z-50 bg-[#426b62] flex items-center justify-center p-5">
+      <div class="bg-white rounded-[2.5rem] p-8 w-full shadow-2xl relative">
+        <div class="w-16 h-16 bg-[#e0f4ec] rounded-full flex items-center justify-center mx-auto mb-4 text-[#4b8f7e]">
+          <i class="fa-solid fa-plane-departure text-2xl"></i>
+        </div>
+        <h2 class="text-2xl font-black text-gray-800 text-center tracking-wide mb-1">建立新旅程</h2>
+        <p class="text-sm text-gray-400 text-center mb-8 font-medium">簡單幾步，開始規劃您的冒險！</p>
+        
+        <div class="space-y-5">
+          <div>
+            <label class="text-xs font-bold text-gray-400 mb-2 block">目的地 (英文/中文)</label>
+            <div class="relative">
+              <input v-model="tripConfig.destination" type="text" class="w-full border border-gray-200 rounded-xl p-3 pr-10 text-gray-700 outline-none focus:border-[#4b8f7e] focus:ring-1 focus:ring-[#4b8f7e] transition" placeholder="例如: Paris, London">
+              <i class="fa-solid fa-magnifying-glass absolute right-4 top-3.5 text-gray-300"></i>
+            </div>
+          </div>
+          <div class="flex space-x-3">
+            <div class="w-3/5">
+              <label class="text-xs font-bold text-gray-400 mb-2 block">開始日期</label>
+              <input v-model="tripConfig.startDate" type="date" class="w-full border border-gray-200 rounded-xl p-3 text-gray-700 outline-none focus:border-[#4b8f7e] focus:ring-1 focus:ring-[#4b8f7e] transition">
+            </div>
+            <div class="w-2/5">
+              <label class="text-xs font-bold text-gray-400 mb-2 block">天數</label>
+              <input v-model.number="tripConfig.days" type="number" min="1" class="w-full border border-gray-200 rounded-xl p-3 text-gray-700 outline-none text-center font-bold focus:border-[#4b8f7e] focus:ring-1 focus:ring-[#4b8f7e] transition">
+            </div>
+          </div>
+          <div>
+            <label class="text-xs font-bold text-gray-400 mb-2 block">自訂匯率 (EUR:台幣)</label>
+            <input v-model.number="tripConfig.eurRate" type="number" step="0.01" class="w-full border border-gray-200 rounded-xl p-3 text-gray-700 outline-none text-right font-bold focus:border-[#4b8f7e] focus:ring-1 focus:ring-[#4b8f7e] transition" placeholder="例如: 34.5">
+          </div>
+        </div>
+
+        <button @click="startPlanning" class="w-full bg-[#4b8f7e] text-white rounded-2xl py-3.5 font-bold tracking-wider flex justify-center items-center mt-8 hover:bg-[#3d7567] transition shadow-lg shadow-teal-900/20">
+          開始規劃 <i class="fa-solid fa-arrow-right ml-2"></i>
+        </button>
+        <button v-if="hasSavedConfig || tripList.items.length > 0 || (firebaseEnabled && user)" @click="cancelSetup" class="w-full text-center text-gray-400 text-sm font-medium mt-4 hover:text-gray-600 transition">取消</button>
+      </div>
+    </div>
+  </transition>
+
+  <transition name="fade">
+    <div v-if="scheduleModal.show" class="absolute inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-5">
+      <transition name="modal" appear>
+        <div class="bg-white rounded-[2rem] p-6 w-full shadow-2xl">
+          <h3 class="text-lg font-black text-gray-800 mb-1">排入行程</h3>
+          <p class="text-xs font-bold text-[#4b8f7e] mb-5">
+            <i class="fa-solid fa-location-dot mr-1"></i>
+            <template v-if="scheduleModal.isBatch">已批次選擇 {{ scheduleModal.batchItems.length }} 個景點</template>
+            <template v-else>{{ scheduleModal.item?.place }}</template>
+          </p>
+          
+          <div class="space-y-4">
+            <div>
+              <label class="text-[10px] font-bold text-gray-400 ml-1">選擇天數</label>
+              <select v-model="scheduleModal.dayId" class="w-full mt-1 p-3 bg-gray-50 text-gray-700 border-none rounded-xl outline-none text-sm font-bold focus:ring-2 focus:ring-[#4b8f7e]">
+                <option v-for="day in tripDays" :value="day.id">{{ day.name }}</option>
+              </select>
+            </div>
+            
+            <div v-if="isTargetDayEmpty" class="animate-fade-in">
+              <label class="text-[10px] font-bold text-gray-400 ml-1">出發時間 (該天第一站)</label>
+              <input v-model="scheduleModal.time" type="time" class="w-full mt-1 p-3 bg-gray-50 text-gray-700 border-none rounded-xl outline-none text-sm focus:ring-2 focus:ring-[#4b8f7e]">
+            </div>
+
+            <div>
+              <label class="text-[10px] font-bold text-gray-400 ml-1">預計停留時間 <span v-if="scheduleModal.isBatch">(每個景點/分鐘)</span><span v-else>(分鐘)</span></label>
+              <input v-model.number="scheduleModal.stayDuration" type="number" min="1" class="w-full mt-1 p-3 bg-gray-50 text-gray-700 border-none rounded-xl outline-none text-sm focus:ring-2 focus:ring-[#4b8f7e]">
+            </div>
+          </div>
+
+          <div class="flex space-x-3 mt-8">
+            <button @click="scheduleModal.show = false" class="flex-1 bg-gray-100 text-gray-500 py-3 rounded-xl text-sm font-bold tracking-wider">取消</button>
+            <button @click="confirmSchedule" class="flex-1 bg-[#4b8f7e] text-white py-3 rounded-xl text-sm font-bold tracking-wider shadow-md">確定加入</button>
+          </div>
+        </div>
+      </transition>
+    </div>
+  </transition>
+
+  <!-- 分享行程：邀請成員（Firebase） -->
+  <transition name="fade">
+    <div v-if="shareModal.show" class="absolute inset-0 z-[300] bg-black/40 backdrop-blur-sm flex items-center justify-center p-5">
+      <div class="bg-white rounded-[2rem] p-6 w-full shadow-2xl">
+        <h3 class="text-lg font-black text-gray-800 mb-1">邀請成員</h3>
+        <p class="text-xs text-gray-500 mb-4">輸入對方的註冊 Email，對方登入後即可在「我的旅程」看到並編輯此行程</p>
+        <input v-model="shareModal.email" type="email" class="w-full border border-gray-200 rounded-xl p-3 text-gray-700 outline-none focus:border-[#4b8f7e] focus:ring-1 focus:ring-[#4b8f7e] mb-3" placeholder="例如: friend@example.com">
+        <p v-if="shareModal.message" class="text-xs mb-3" :class="shareModal.error ? 'text-red-500' : 'text-teal-600'">{{ shareModal.message }}</p>
+        <div class="flex space-x-3">
+          <button @click="shareModal.show = false" class="flex-1 bg-gray-100 text-gray-500 py-3 rounded-xl text-sm font-bold">取消</button>
+          <button @click="inviteByEmail" class="flex-1 bg-[#4b8f7e] text-white py-3 rounded-xl text-sm font-bold">送出邀請</button>
+        </div>
+      </div>
+    </div>
+  </transition>
+
+  <!-- 旅程列表側欄：我的旅程 -->
+  <transition name="fade">
+    <div v-if="tripList.show" class="absolute inset-0 z-[100] bg-black/40 backdrop-blur-sm flex">
+      <div class="w-72 max-w-full h-full bg-white shadow-2xl p-5 flex flex-col">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-base font-black text-gray-800">我的旅程</h2>
+          <div class="flex items-center gap-3">
+            <button v-if="firebaseEnabled && user" @click="refreshTripList" :disabled="tripListRefreshing"
+                    class="text-gray-400 hover:text-teal-600 transition disabled:opacity-30" title="重整行程列表">
+              <i class="fa-solid fa-rotate-right" :class="{'animate-spin': tripListRefreshing}"></i>
+            </button>
+            <button v-if="hasSavedConfig && tripList.items.length > 0" @click="tripList.show = false" class="text-gray-400 hover:text-gray-600">
+              <i class="fa-solid fa-xmark text-lg"></i>
+            </button>
+          </div>
+        </div>
+
+        <button @click="createNewTrip"
+                class="w-full border-2 border-dashed border-teal-200 text-teal-600 rounded-2xl py-3 text-sm font-bold mb-4 flex items-center justify-center hover:bg-teal-50 transition">
+          <i class="fa-solid fa-circle-plus mr-2"></i>建立新旅程
+        </button>
+
+        <div v-if="firebaseEnabled && user && currentTripId" class="mb-3">
+          <button @click="openShareModal" class="w-full bg-teal-50 text-teal-700 border border-teal-200 rounded-xl py-2.5 text-xs font-bold flex items-center justify-center hover:bg-teal-100 transition">
+            <i class="fa-solid fa-user-plus mr-2"></i>邀請成員共享此行程
+          </button>
+        </div>
+
+        <div class="flex-1 overflow-y-auto no-scrollbar space-y-2">
+          <div v-for="trip in tripList.items"
+               :key="trip.id"
+               @click="switchTrip(trip.id)"
+               class="p-3 rounded-xl border flex justify-between items-center cursor-pointer transition"
+               :class="trip.id === currentTripId ? 'bg-teal-50 border-teal-200 border-l-4 border-l-teal-500 text-teal-800' : 'bg-gray-50 border-gray-100 text-gray-700 hover:bg-gray-100'">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <span class="text-sm font-bold truncate">{{ trip.destination || '未命名旅程' }}</span>
+                <span v-if="trip.isShared || (firebaseEnabled && user && trip.ownerUid && trip.ownerUid !== user.uid)" class="text-[9px] bg-teal-100 text-teal-600 px-1.5 py-0.5 rounded font-bold">共編</span>
+              </div>
+              <div class="text-[11px] text-gray-400 mt-0.5">
+                {{ trip.startDate }} ・ {{ trip.days }} 天
+              </div>
+            </div>
+            <button v-if="!firebaseEnabled || !trip.ownerUid || trip.ownerUid === user?.uid" @click.stop="deleteTrip(trip.id)"
+                    class="text-gray-300 hover:text-red-400 flex-shrink-0 ml-2">
+              <i class="fa-solid fa-trash"></i>
+            </button>
+          </div>
+
+          <div v-if="tripList.items.length === 0"
+               class="text-xs text-gray-400 text-center mt-6">
+            目前沒有任何旅程，先按「建立新旅程」吧！
+          </div>
+        </div>
+      </div>
+
+      <div class="flex-1" @click="hasSavedConfig && tripList.items.length > 0 ? tripList.show = false : null"></div>
+    </div>
+  </transition>
+
+  <div v-show="appState === 'main'" class="flex flex-col h-full w-full">
+    
+    <header class="bg-white text-teal-800 pt-6 pb-4 px-4 border-b border-gray-100 z-30 flex justify-between items-center shadow-sm relative">
+      <div class="flex items-center space-x-3 min-w-0">
+        <button @click="tripList.show = true"
+                class="w-9 h-9 rounded-full bg-gray-50 flex items-center justify-center text-gray-400 hover:text-teal-600 hover:bg-teal-50 transition flex-shrink-0">
+          <i class="fa-solid fa-bars"></i>
+        </button>
+        <div class="min-w-0">
+          <h1 class="text-xl font-bold tracking-wider uppercase text-[#4b8f7e] truncate">
+            {{ tripConfig.destination || '我的旅程' }} <span class="text-sm font-light text-gray-400 ml-1">Trip</span>
+          </h1>
+          <div class="text-[10px] text-gray-400 font-medium">{{ tripDateRange }}</div>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 flex-shrink-0">
+        <span v-if="firebaseEnabled && user" class="text-[10px] text-gray-400 truncate max-w-[120px]" :title="user.email">
+          {{ user.displayName || user.email }}
+        </span>
+        <button v-if="firebaseEnabled && user" @click="doSignOut" class="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 transition" title="登出"><i class="fa-solid fa-right-from-bracket text-sm"></i></button>
+        <button @click="appState = 'setup'" class="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center text-gray-400 hover:text-teal-600 hover:bg-teal-50 transition">
+          <i class="fa-solid fa-gear"></i>
+        </button>
+      </div>
+    </header>
+
+    <main class="flex-1 overflow-y-auto no-scrollbar pb-28 bg-[#fafbfc] relative">
+      
+      <div v-show="activeTab === 'itinerary'" class="animate-fade-in relative">
+        <div class="bg-white border-b border-gray-100 sticky top-0 z-20 shadow-sm">
+          <div class="flex overflow-x-auto no-scrollbar px-4 py-3 space-x-3">
+            <button v-for="day in tripDays" :key="day.id" @click="activeDay = day.id"
+                    :class="activeDay === day.id ? 'bg-[#4b8f7e] text-white shadow-md shadow-teal-200' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'"
+                    class="flex-shrink-0 px-5 py-2 rounded-full text-sm font-medium tracking-wide transition-all duration-300">
+              {{ day.name }}
+            </button>
+          </div>
+        </div>
+
+        <div class="p-5 space-y-4">
+          <div class="flex justify-between items-center mb-4">
+            <h2 class="text-sm font-bold text-gray-500 tracking-widest">{{ currentDayName }} 行程</h2>
+            <button @click="activeTab = 'wishlist'" class="text-[#4b8f7e] text-xs flex items-center bg-teal-50 px-3 py-1.5 rounded-full hover:bg-teal-100 transition font-bold shadow-sm border border-teal-100">
+              <i class="fa-solid fa-heart mr-1.5"></i>從景點庫加入
+            </button>
+          </div>
+
+          <div v-if="timelineItinerary.length > 0" ref="itineraryListRef" class="space-y-0 mt-2 pb-4">
+            <div v-for="(item, index) in timelineItinerary" :key="item.id" class="relative group itinerary-sort-item" :data-id="item.id">
+              
+              <div v-if="index > 0" class="flex items-center my-1 ml-[1.6rem]">
+                <div class="w-0.5 h-8 bg-dashed border-l-2 border-dashed border-teal-200"></div>
+                <div class="ml-4 flex items-center text-[11px] font-bold text-gray-400 bg-white border border-gray-100 shadow-sm px-2.5 py-1 rounded-lg z-10">
+                   <button @click.stop="toggleTransport(item)" class="mr-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-gray-50 hover:bg-teal-50 hover:text-[#4b8f7e] transition active:scale-95 text-[#4b8f7e]">
+                      <i :class="item.transportMode === 'walking' ? 'fa-solid fa-person-walking' : 'fa-solid fa-car-side'"></i>
+                   </button>
+                   <span v-if="item.travelTime !== null">
+                     {{ item.transportMode === 'walking' ? '步行' : '車程' }}約 {{ item.travelTime }} 分鐘
+                   </span>
+                   <span v-else class="text-gray-300"><i class="fa-solid fa-spinner fa-spin mr-1"></i>估算中...</span>
+                </div>
+              </div>
+
+              <div class="flex gap-4 items-start">
+                <div class="flex flex-col items-center w-14 pt-3 flex-shrink-0">
+                  <span class="text-[12px] font-black text-[#4b8f7e]">{{ item.calculatedStartTime }}</span>
+                  <span class="text-[9px] font-bold text-gray-400 mt-0.5">~{{ item.calculatedEndTime }}</span>
+                  <div v-if="index === 0 || index === timelineItinerary.length - 1" class="w-0.5 flex-1 bg-teal-100 mt-2 opacity-0"></div>
+                </div>
+                
+                <div class="flex-1 pb-1 relative">
+                  <div v-if="editingId !== item.id" class="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm relative overflow-hidden flex flex-col">
+                    <div v-if="item.lat" class="absolute top-0 right-0 w-2 h-2 bg-[#4b8f7e] rounded-full mt-3 mr-3 shadow-sm"></div>
+                    
+                    <div class="flex justify-start items-start">
+                      <div class="drag-handle mr-3 mt-1 text-gray-300 hover:text-[#4b8f7e] p-1 -ml-2 -mt-1 rounded transition">
+                         <i class="fa-solid fa-grip-vertical text-sm pointer-events-none"></i>
+                      </div>
+                      <div class="pr-3 flex-1">
+                        <h3 class="text-gray-700 font-bold text-base leading-snug">{{ item.place }}</h3>
+                        <p class="text-[10px] text-gray-400 font-bold mt-1">停留 {{ item.stayDuration }} 分鐘</p>
+                      </div>
+                    </div>
+
+                    <div class="mt-2.5 flex flex-wrap items-center gap-2 pl-7">
+                      <span :class="getTagInfo(item.tag).color" class="px-2 py-1 rounded-lg text-[10px] font-bold border shadow-sm flex items-center">
+                        <i :class="['fa-solid', getTagInfo(item.tag).icon, 'mr-1.5']"></i>{{ getTagInfo(item.tag).name }}
+                      </span>
+                      <span v-if="item.weather" class="flex items-center bg-[#f0f9f6] text-[#4b8f7e] px-2 py-1 rounded-lg text-[10px] font-bold border border-teal-50 shadow-sm">
+                        {{ item.weather.icon }} {{ item.weather.temp }}°C
+                      </span>
+                      <span v-else-if="item.weatherLoading" class="text-gray-300 text-[10px] font-bold"><i class="fa-solid fa-spinner fa-spin"></i></span>
+                    </div>
+
+                    <div class="mt-4 flex justify-end items-center space-x-4 border-t border-gray-50 pt-3 pl-7">
+                      <a v-if="item.lat && item.lng" :href="'https://www.google.com/maps/search/?api=1&query=' + item.lat + ',' + item.lng" target="_blank" @click.stop class="text-blue-400 hover:text-blue-600 transition flex items-center mr-auto">
+                        <i class="fa-brands fa-google text-xs mr-1"></i><span class="text-[10px] font-bold">地圖</span>
+                      </a>
+                      <span v-else class="text-[10px] font-bold text-gray-300 mr-auto"><i class="fa-solid fa-pen-nib mr-1"></i>無座標資訊</span>
+                      
+                      <button @click.stop="editItinerary(item)" class="text-gray-300 hover:text-[#4b8f7e]"><i class="fa-solid fa-pen text-xs"></i></button>
+                      <button @click.stop="deleteItinerary(item.id)" class="text-gray-300 hover:text-red-400"><i class="fa-solid fa-trash text-xs"></i></button>
+                    </div>
+                  </div>
+                  
+                  <div v-else class="bg-white p-4 rounded-2xl border border-[#4b8f7e] shadow-md z-10 relative">
+                    <div v-if="index === 0" class="mb-2">
+                      <label class="text-[10px] text-gray-400 ml-1">起始時間</label>
+                      <input v-model="editForm.time" type="time" class="w-full p-2 bg-gray-50 border-none rounded-lg text-sm font-bold focus:ring-1 focus:ring-[#4b8f7e] outline-none">
+                    </div>
+                    <div class="mb-2">
+                      <label class="text-[10px] text-gray-400 ml-1">停留時間(分)</label>
+                      <input v-model.number="editForm.stayDuration" type="number" class="w-full p-2 bg-gray-50 border-none rounded-lg text-sm font-bold focus:ring-1 focus:ring-[#4b8f7e] outline-none">
+                    </div>
+                    <div class="mb-3">
+                      <label class="text-[10px] text-gray-400 ml-1">地點名稱 (支援雙語)</label>
+                      <input v-model="editForm.place" type="text" class="w-full p-2 bg-gray-50 border-none rounded-lg text-sm font-bold focus:ring-1 focus:ring-[#4b8f7e] outline-none">
+                    </div>
+                    <div class="mb-4">
+                      <label class="text-[10px] text-gray-400 ml-1">分類標籤</label>
+                      <div class="relative">
+                        <select v-model="editForm.tag" class="w-full p-2 bg-gray-50 border-none rounded-lg text-xs font-bold text-gray-700 appearance-none outline-none focus:ring-1 focus:ring-[#4b8f7e]">
+                          <option v-for="tag in availableTags" :value="tag.id">{{ tag.name }}</option>
+                        </select>
+                        <i class="fa-solid fa-chevron-down absolute right-3 top-2.5 text-gray-400 text-[10px] pointer-events-none"></i>
+                      </div>
+                    </div>
+                    <div class="flex space-x-2">
+                      <button @click="saveItinerary(item)" class="flex-1 bg-[#4b8f7e] text-white py-2.5 rounded-lg text-xs font-bold tracking-wider">完成</button>
+                      <button @click="editingId = null" class="flex-1 bg-gray-100 text-gray-500 py-2.5 rounded-lg text-xs font-bold tracking-wider">取消</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div v-else class="text-center py-12 bg-white rounded-3xl border border-dashed border-gray-200 mt-4">
+            <i class="fa-solid fa-heart-circle-plus text-4xl mb-3 text-teal-100"></i>
+            <p class="text-sm font-bold text-gray-400 tracking-widest mb-4">這天還沒有行程喔</p>
+            <button @click="activeTab = 'wishlist'" class="bg-[#4b8f7e] text-white px-5 py-2.5 rounded-xl text-sm font-bold tracking-wider shadow-md hover:bg-[#3d7567] transition">
+              去景點庫挑選
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div v-show="activeTab === 'wishlist'" class="p-5 space-y-4 animate-fade-in relative">
+        <div class="flex justify-between items-end mb-2">
+          <div>
+            <h2 class="text-sm font-bold text-gray-500 tracking-widest">總景點庫</h2>
+            <span class="text-[10px] text-gray-400 inline-block mt-0.5">{{ wishlist.length }} 個景點</span>
+          </div>
+          
+          <div class="flex items-center space-x-2">
+            <button @click="toggleBatchMode" :class="isBatchMode ? 'bg-[#4b8f7e] text-white shadow-md' : 'bg-teal-50 text-teal-700 hover:bg-teal-100'" class="px-3 py-1.5 rounded-lg text-[11px] font-bold transition flex items-center shadow-sm">
+              <i class="fa-solid fa-list-check mr-1.5"></i>批次
+            </button>
+            <div class="relative">
+              <select v-model="wishlistSortMode" class="appearance-none bg-teal-50 text-teal-700 border border-teal-100 text-[11px] font-bold py-1.5 pl-3 pr-7 rounded-lg outline-none cursor-pointer hover:bg-teal-100 transition shadow-sm">
+                <option value="default">預設 (加入時間)</option>
+                <option value="unscheduled">未排入優先</option>
+                <option value="city">依城市分組</option>
+              </select>
+              <i class="fa-solid fa-sort absolute right-2.5 top-2 text-teal-600 pointer-events-none text-[10px]"></i>
+            </div>
+          </div>
+        </div>
+
+        <transition name="fade">
+          <div v-if="!isBatchMode" class="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm relative z-20">
+            <div class="relative">
+              <input :value="newWishlistPlace.place" @input="handleSearchWishlist" @keyup.enter="addToWishlist" type="text" class="w-full p-3.5 bg-gray-50 text-gray-700 border-none rounded-xl outline-none text-sm focus:ring-2 focus:ring-[#4b8f7e] pr-10 font-medium" placeholder="搜尋名稱，或貼上 Plus Code...">
+              
+              <div v-if="isSearchingPlace" class="absolute right-3.5 top-3.5 text-gray-300"><i class="fa-solid fa-spinner fa-spin"></i></div>
+              <div v-else-if="placeSuggestions.length > 0" @click="placeSuggestions = []" class="absolute right-3.5 top-3.5 text-gray-400 hover:text-gray-600 cursor-pointer transition"><i class="fa-solid fa-xmark text-lg"></i></div>
+              <div v-else class="absolute right-3.5 top-3.5 text-gray-300"><i class="fa-solid fa-magnifying-glass"></i></div>
+              
+              <ul v-if="placeSuggestions.length > 0" class="absolute z-50 w-full bg-white border border-gray-200 rounded-xl shadow-[0_15px_30px_-5px_rgba(0,0,0,0.15)] mt-2 max-h-56 overflow-y-auto">
+                <li v-for="place in placeSuggestions" :key="place.id" @click="selectWishlistPlace(place)" class="cursor-pointer px-4 py-3 hover:bg-[#e0f4ec] border-b border-gray-50 last:border-b-0 transition flex flex-col relative" :class="{'opacity-70': place.lat === null}">
+                  <span class="absolute right-4 top-4 text-gray-300"><i :class="['fa-solid', getTagInfo(place.autoTag).icon]"></i></span>
+                  <span class="text-sm font-bold text-gray-700 pr-6" :class="{'text-orange-600': place.lat === null}">{{ place.name }}</span>
+                  <span class="text-[10px] text-gray-400 mt-1 leading-tight">{{ place.address }}</span>
+                </li>
+                <li @click="placeSuggestions = []" class="cursor-pointer px-4 py-3 bg-teal-50 text-teal-700 hover:bg-teal-100 transition flex justify-center items-center border-t border-teal-100 sticky bottom-0">
+                  <span class="text-xs font-bold"><i class="fa-solid fa-pen-nib mr-1.5"></i>隱藏選單，直接建立自訂景點</span>
+                </li>
+              </ul>
+              
+              <div v-if="newWishlistPlace.place && !isSearchingPlace && placeSuggestions.length === 0 && !newWishlistPlace.lat" class="bg-orange-50 text-orange-600 border border-orange-200 rounded-xl mt-3 px-4 py-3 text-[11px] font-bold shadow-sm relative z-10">
+                <i class="fa-solid fa-circle-info mr-1"></i> 未選擇精確位置，請點選「加入景點庫」建立為自訂景點。
+              </div>
+            </div>
+
+            <div class="flex space-x-2 mt-3">
+               <div class="relative w-2/5">
+                  <select v-model="newWishlistPlace.tag" class="w-full p-3.5 bg-gray-50 text-gray-600 border-none rounded-xl outline-none text-xs font-bold appearance-none focus:ring-2 focus:ring-[#4b8f7e]">
+                     <option v-for="t in availableTags" :value="t.id">{{ t.name }}</option>
+                  </select>
+                  <i class="fa-solid fa-chevron-down absolute right-3 top-4 text-gray-400 text-[10px] pointer-events-none"></i>
+               </div>
+               <button @click="addToWishlist" class="w-3/5 bg-[#4b8f7e] text-white p-3.5 rounded-xl text-sm font-bold tracking-wider hover:bg-[#3d7567] transition shadow-md flex justify-center items-center relative z-10">
+                 <i class="fa-solid fa-bookmark mr-2"></i>加入景點庫
+               </button>
+            </div>
+          </div>
+        </transition>
+
+        <div class="space-y-5 pt-2 pb-16">
+          <template v-for="group in processedWishlist" :key="group.groupName">
+            
+            <div v-if="group.items.length > 0" class="space-y-3">
+              <div v-if="wishlistSortMode !== 'default'" class="flex items-center space-x-2 mb-1 mt-3">
+                <span class="text-[11px] font-black tracking-wider text-gray-600 bg-white border border-gray-200 px-3 py-1 rounded-full shadow-sm flex items-center">
+                  <i v-if="wishlistSortMode === 'city'" class="fa-solid fa-city text-teal-500 mr-1.5"></i>
+                  <i v-else-if="group.groupName === '未排入行程'" class="fa-solid fa-heart text-rose-400 mr-1.5"></i>
+                  <i v-else class="fa-solid fa-calendar-check text-teal-500 mr-1.5"></i>
+                  {{ group.groupName }}
+                </span>
+                <div class="flex-1 h-px bg-gray-200"></div>
+              </div>
+
+              <div v-for="item in group.items" :key="item.id" 
+                   @click="isBatchMode ? toggleBatchSelect(item) : null"
+                   :class="[isBatchMode && !isItemScheduled(item) ? 'cursor-pointer hover:bg-teal-50/50' : '', isBatchSelected(item) ? 'ring-2 ring-[#4b8f7e] bg-[#f0f9f6]' : 'bg-white']"
+                   class="p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col group relative transition-all duration-200">
+                
+                <transition name="fade">
+                  <div v-if="isBatchMode && !isItemScheduled(item)" class="absolute top-4 right-4 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors z-10" :class="isBatchSelected(item) ? 'bg-[#4b8f7e] border-[#4b8f7e] text-white shadow-md' : 'border-gray-300 bg-white'">
+                    <i v-if="isBatchSelected(item)" class="fa-solid fa-check text-xs"></i>
+                  </div>
+                </transition>
+
+                <div v-if="isItemScheduled(item)" class="absolute -top-2 -right-2 bg-gray-100 text-gray-500 border border-gray-200 px-2 py-0.5 rounded-lg text-[9px] font-bold shadow-sm z-10">
+                  <i class="fa-solid fa-check text-[#4b8f7e] mr-1"></i>已排入行程
+                </div>
+
+                <div class="flex justify-between items-start mb-2">
+                  <div class="pr-2 w-full">
+                    <div v-if="editingWishlistId !== item.id" class="flex items-start group/edit">
+                      <h3 class="text-gray-700 font-bold text-base leading-snug pr-8" :class="{'text-gray-400': isItemScheduled(item) && !isBatchMode}">
+                        {{ item.place }}
+                      </h3>
+                      <button v-if="!isBatchMode" @click.stop="editWishlistName(item)" class="ml-2 mt-1 text-gray-300 hover:text-[#4b8f7e] transition active:scale-95 flex-shrink-0" title="編輯名稱與分類">
+                        <i class="fa-solid fa-pen text-xs"></i>
+                      </button>
+                    </div>
+                    
+                    <div v-else-if="!isBatchMode" class="w-full pr-2 mb-2">
+                      <input v-model="wishlistEditName" class="w-full p-2.5 mb-2 bg-gray-50 border border-teal-200 rounded-lg text-sm font-bold text-gray-700 outline-none focus:ring-1 focus:ring-teal-400" placeholder="名稱 (可雙語)" @keyup.enter="saveWishlistName(item)">
+                      <div class="flex space-x-2">
+                        <div class="relative flex-1">
+                            <select v-model="wishlistEditTag" class="w-full p-2.5 bg-gray-50 border border-teal-200 rounded-lg text-xs font-bold text-gray-700 appearance-none outline-none focus:ring-1 focus:ring-teal-400">
+                                <option v-for="t in availableTags" :value="t.id">{{ t.name }}</option>
+                            </select>
+                            <i class="fa-solid fa-chevron-down absolute right-3 top-3 text-gray-400 text-[10px] pointer-events-none"></i>
+                        </div>
+                        <button @click.stop="saveWishlistName(item)" class="text-white bg-[#4b8f7e] px-4 rounded-lg hover:bg-[#3d7567] shadow-sm text-xs font-bold transition">完成</button>
+                      </div>
+                    </div>
+
+                    <div v-if="editingWishlistId !== item.id" class="mt-2.5 flex flex-wrap items-center gap-2" :class="{'opacity-50': isItemScheduled(item) && !isBatchMode}">
+                      <span :class="getTagInfo(item.tag).color" class="px-2 py-1 rounded-lg text-[10px] font-bold border shadow-sm flex items-center bg-white">
+                        <i :class="['fa-solid', getTagInfo(item.tag).icon, 'mr-1.5']"></i>{{ getTagInfo(item.tag).name }}
+                      </span>
+                      <span v-if="item.weather" class="flex items-center bg-white text-[#4b8f7e] px-2 py-1 rounded-lg text-[10px] font-bold border border-teal-50 shadow-sm">
+                        {{ item.weather.icon }} {{ item.weather.temp }}°C
+                      </span>
+                      <span v-else-if="item.weatherLoading" class="text-gray-300 text-[10px] font-bold"><i class="fa-solid fa-spinner fa-spin"></i></span>
+                      <span v-if="wishlistSortMode !== 'city' && item.city" class="text-[9px] text-gray-400 font-bold ml-1">
+                        <i class="fa-solid fa-location-dot mr-0.5"></i>{{ item.city }}
+                      </span>
+                    </div>
+                  </div>
+                  <button v-if="!isBatchMode" @click.stop="deleteWishlist(item.id)" class="text-gray-200 hover:text-red-400 p-1 relative z-10 flex-shrink-0"><i class="fa-solid fa-xmark text-lg"></i></button>
+                </div>
+                
+                <div v-if="linkingMapId === item.id && !isBatchMode" class="mt-3 bg-blue-50/50 p-3 rounded-xl border border-blue-100 relative">
+                  <div class="text-[10px] text-blue-500 font-bold mb-1.5"><i class="fa-solid fa-magnifying-glass mr-1"></i>搜尋地標或輸入 Plus Code 座標</div>
+                  <div class="flex items-center">
+                    <input :value="linkSearchQuery" @input="handleLinkSearch" class="w-full text-xs p-2.5 rounded-lg border border-blue-200 focus:outline-none focus:border-blue-400 font-medium placeholder-gray-300" placeholder="例如: 3RHJ+FX Otterlo...">
+                    <button @click.stop="cancelLinkMap" class="ml-2 w-8 h-8 flex-shrink-0 flex items-center justify-center bg-gray-100 text-gray-500 rounded-lg hover:bg-gray-200"><i class="fa-solid fa-xmark"></i></button>
+                  </div>
+                  <div v-if="isLinkingSearch" class="text-[10px] text-blue-400 py-2 font-bold"><i class="fa-solid fa-spinner fa-spin mr-1"></i>搜尋中...</div>
+                  
+                  <ul v-if="linkSuggestions.length > 0" class="bg-white border border-gray-200 rounded-xl shadow-lg max-h-40 overflow-y-auto mt-2 absolute z-30 w-[calc(100%-1.5rem)]">
+                    <li v-for="place in linkSuggestions" @click.stop="confirmLinkMap(item, place)" class="p-3 hover:bg-[#e0f4ec] cursor-pointer border-b border-gray-50 last:border-0 transition relative" :class="{'opacity-70 cursor-not-allowed': place.lat === null}">
+                      <span class="absolute right-3 top-3 text-gray-300"><i :class="['fa-solid', getTagInfo(place.autoTag).icon]"></i></span>
+                      <div class="font-bold text-xs pr-6" :class="place.lat === null ? 'text-orange-600' : 'text-gray-700'">{{ place.name }}</div>
+                      <div class="text-[9px] text-gray-400 truncate mt-0.5">{{ place.address }}</div>
+                    </li>
+                  </ul>
+                </div>
+
+                <div v-if="!isBatchMode" class="flex justify-between items-center border-t border-gray-50 pt-3 mt-2">
+                  <a v-if="item.lat && item.lng" :href="'https://www.google.com/maps/search/?api=1&query=' + item.lat + ',' + item.lng" target="_blank" @click.stop class="text-blue-400 hover:text-blue-600 transition flex items-center bg-blue-50 px-3 py-1.5 rounded-lg">
+                    <i class="fa-brands fa-google text-xs mr-1.5"></i><span class="text-[10px] font-bold">看地圖</span>
+                  </a>
+                  
+                  <div v-else class="flex items-center space-x-2">
+                    <span class="text-[10px] text-gray-300 font-bold px-1">無地圖資訊</span>
+                    <button @click.stop="startLinkMap(item)" class="text-[10px] bg-blue-50 text-blue-500 hover:bg-blue-100 px-2.5 py-1.5 rounded-lg transition font-bold shadow-sm border border-blue-100">
+                      <i class="fa-solid fa-location-dot mr-1"></i>連結地標
+                    </button>
+                  </div>
+
+                  <button v-if="!isItemScheduled(item)" @click.stop="openScheduleModal(item)" class="bg-teal-50 text-[#4b8f7e] border border-teal-100 hover:bg-[#4b8f7e] hover:text-white px-4 py-1.5 rounded-lg text-xs font-bold tracking-wider transition shadow-sm flex items-center">
+                    <i class="fa-solid fa-calendar-plus mr-1.5"></i>排入行程
+                  </button>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <div v-if="wishlist.length === 0" class="text-center py-12 text-gray-300">
+            <i class="fa-solid fa-box-open text-4xl mb-3 opacity-50"></i>
+            <p class="text-sm font-medium tracking-widest">景點庫空空如也<br>快搜尋想去的地方吧！</p>
+          </div>
+        </div>
+
+        <transition name="modal">
+          <div v-if="isBatchMode" class="fixed bottom-[65px] left-0 right-0 max-w-md mx-auto w-full p-4 z-40 bg-white/95 backdrop-blur shadow-[0_-10px_20px_rgba(0,0,0,0.05)] border-t border-gray-100 flex justify-between items-center rounded-t-3xl">
+            <div class="flex flex-col">
+              <span class="text-sm font-black text-teal-800">已選 {{ selectedBatchItems.length }} 個景點</span>
+              <span v-if="selectedBatchItems.length === 0" class="text-[10px] text-gray-400 font-bold">請點擊卡片勾選景點</span>
+            </div>
+            <div class="flex space-x-2">
+              <button @click="toggleBatchMode" class="px-4 py-2.5 bg-gray-100 text-gray-500 rounded-xl text-xs font-bold">取消</button>
+              <button @click="openBatchScheduleModal" :disabled="selectedBatchItems.length === 0" class="bg-[#4b8f7e] text-white px-5 py-2.5 rounded-xl text-sm font-bold tracking-wider shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center transition">
+                <i class="fa-solid fa-calendar-plus mr-1.5"></i>加入行程
+              </button>
+            </div>
+          </div>
+        </transition>
+
+      </div>
+
+      <div v-show="activeTab === 'split'" class="p-5 space-y-6">
+        <div class="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
+          <h3 class="text-xs font-bold text-gray-400 tracking-widest mb-3">設定旅伴</h3>
+          <input v-model="membersInput" @change="updateMembers" type="text" class="w-full p-3 bg-gray-50 text-gray-700 border-none rounded-xl text-sm outline-none focus:ring-1 focus:ring-[#4b8f7e]" placeholder="輸入名字，用逗號分隔">
+        </div>
+
+        <div class="bg-[#f0f9f6] p-5 rounded-2xl border border-teal-50 relative">
+          <h3 class="text-xs font-bold text-[#4b8f7e] tracking-widest mb-3 flex justify-between">
+            <span>新增支出</span>
+          </h3>
+          <div class="flex space-x-2 mb-3">
+            <select v-model="newExpense.payer" class="p-3 w-1/3 bg-white border-none rounded-xl text-sm text-gray-700 outline-none font-bold shadow-sm">
+              <option value="" disabled>誰付款</option>
+              <option v-for="m in members" :key="m" :value="m">{{ m }}</option>
+            </select>
+            <div class="flex w-2/3 bg-white rounded-xl overflow-hidden border border-white focus-within:border-[#4b8f7e] shadow-sm">
+              <select v-model="newExpense.currency" class="p-3 bg-gray-50 border-none text-sm text-gray-700 outline-none font-bold">
+                <option value="EUR">EUR</option>
+                <option value="TWD">TWD</option>
+              </select>
+              <input v-model.number="newExpense.amount" type="number" class="p-3 w-full border-none text-sm outline-none font-bold" placeholder="輸入金額">
+            </div>
+          </div>
+          
+          <input v-model="newExpense.note" type="text" class="w-full p-3 bg-white border-none rounded-xl text-sm mb-4 outline-none font-medium focus:ring-1 focus:ring-[#4b8f7e] shadow-sm" placeholder="花費項目 (如: 晚餐、車票)">
+          
+          <div class="mb-4 bg-white p-3 rounded-xl border border-teal-100 shadow-sm">
+            <label class="text-[10px] font-bold text-gray-400 block mb-2">誰要一起分這筆帳？</label>
+            <div class="flex flex-wrap gap-2">
+              <label v-for="m in members" :key="m" class="flex items-center space-x-1.5 bg-gray-50 px-2 py-1 rounded-lg border border-gray-200 cursor-pointer hover:bg-teal-50">
+                <input type="checkbox" :value="m" v-model="newExpense.involved" class="text-[#4b8f7e] focus:ring-[#4b8f7e] rounded w-3 h-3">
+                <span class="text-xs font-bold" :class="newExpense.involved && newExpense.involved.includes(m) ? 'text-[#4b8f7e]' : 'text-gray-500'">{{ m }}</span>
+              </label>
+            </div>
+          </div>
+
+          <button @click="addExpense" class="w-full bg-[#4b8f7e] text-white p-3 rounded-xl text-sm font-bold tracking-wider hover:bg-[#3d7567] transition shadow-md">記一筆</button>
+        </div>
+
+        <div v-if="expenses.length > 0" class="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
+          <div class="flex justify-between items-end mb-4">
+            <h3 class="text-xs font-bold text-gray-400 tracking-widest">結算單</h3>
+            <button @click="showTwdSettlement = !showTwdSettlement" class="text-[10px] bg-gray-50 hover:bg-gray-100 text-gray-500 px-3 py-1.5 rounded-lg font-bold transition border border-gray-200 flex items-center">
+              <i class="fa-solid fa-right-left mr-1.5"></i>切換成 {{ showTwdSettlement ? '各幣別結算' : '台幣 (TWD) 總結算' }}
+            </button>
+          </div>
+          
+          <div class="text-[#4b8f7e] text-sm font-black mb-3">
+            總計：{{ showTwdSettlement ? 'NT$ ' + totalExpenseTwd : '€ ' + totalExpenseEur.toFixed(2) }}
+            <span v-if="showTwdSettlement" class="text-[9px] text-gray-400 font-bold ml-1">(匯率 {{ tripConfig.eurRate }})</span>
+          </div>
+
+          <ul class="space-y-3">
+            <li v-for="tx in settlements" class="text-sm font-bold text-gray-600 flex items-center bg-gray-50 p-3 rounded-xl border border-gray-100">
+              <i class="fa-solid fa-arrow-right-arrow-left text-[#4b8f7e] mr-3 text-xs"></i>{{ tx }}
+            </li>
+            <li v-if="settlements.length === 0" class="text-sm font-medium text-gray-400">目前帳目已平</li>
+          </ul>
+        </div>
+        
+        <div v-if="expenses.length > 0" class="pt-2 pb-16">
+          <h3 class="text-xs font-bold text-gray-400 tracking-widest mb-3 px-1">消費紀錄</h3>
+          <div class="space-y-2">
+            <div v-for="exp in expenses" :key="exp.id" class="flex justify-between items-center bg-white p-4 rounded-2xl border border-gray-50 shadow-sm">
+              <div>
+                <div class="text-sm font-bold text-gray-700">{{ exp.note }}</div>
+                <div class="text-xs font-medium text-gray-400 mt-0.5">{{ exp.payer }} 墊付</div>
+                <div class="text-[10px] font-bold text-teal-600 mt-1.5 bg-teal-50 inline-block px-2 py-0.5 rounded border border-teal-100">
+                  分帳: {{ exp.involved && exp.involved.length > 0 ? (exp.involved.length === members.length ? '所有人' : exp.involved.join(', ')) : '所有人' }}
+                </div>
+              </div>
+              <div class="flex items-center space-x-3 text-right">
+                <div>
+                  <div class="text-sm font-black" :class="exp.currency === 'EUR' ? 'text-blue-500' : 'text-[#4b8f7e]'">
+                    {{ exp.originalAmount }} {{ exp.currency }}
+                  </div>
+                  <div v-if="showTwdSettlement && exp.currency === 'EUR'" class="text-[9px] font-bold text-gray-400">NT$ {{ exp.twdAmount }}</div>
+                </div>
+                <button @click="deleteExpense(exp.id)" class="text-gray-200 hover:text-red-400 pl-2"><i class="fa-solid fa-circle-xmark text-lg"></i></button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div v-show="activeTab === 'map'" class="h-full flex flex-col relative pb-16">
+        <div class="absolute top-4 left-4 right-4 z-20 flex space-x-2">
+          
+          <div class="flex-1 bg-white/90 backdrop-blur-sm rounded-xl px-4 py-3 shadow-md border border-gray-100 text-sm font-bold text-gray-700 flex justify-between items-center relative">
+            <div class="flex items-center w-full">
+              <i class="fa-solid fa-filter text-[#4b8f7e] mr-2"></i>
+              <select v-model="mapDayFilter" class="bg-transparent border-none outline-none font-bold text-gray-700 cursor-pointer w-full appearance-none">
+                <option value="all">地圖總覽 (全部)</option>
+                <option value="wishlist">只看未排入景點</option>
+                <option v-for="day in tripDays" :key="day.id" :value="day.id">只看 {{ day.name }}</option>
+              </select>
+              <i class="fa-solid fa-chevron-down absolute right-4 text-gray-400 pointer-events-none text-xs"></i>
+            </div>
+          </div>
+          
+          <button @click="locateUser" class="bg-white/90 backdrop-blur-sm w-11 h-11 rounded-xl shadow-md border border-gray-100 text-[#4b8f7e] hover:bg-[#e0f4ec] transition flex items-center justify-center flex-shrink-0">
+            <i class="fa-solid fa-location-crosshairs text-lg"></i>
+          </button>
+        </div>
+        <div id="leafletMap" class="w-full h-full min-h-[500px]"></div>
+      </div>
+
+    </main>
+
+    <nav class="bg-white/95 backdrop-blur-md border-t border-gray-100 flex justify-around p-2 pb-6 z-50 absolute bottom-0 w-full shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.05)]">
+      <button @click="activeTab = 'itinerary'" :class="activeTab === 'itinerary' ? 'text-[#4b8f7e]' : 'text-gray-300'" class="flex flex-col items-center flex-1 py-2 transition">
+        <i class="fa-solid fa-calendar-day text-xl mb-1.5"></i>
+        <span class="text-[10px] font-bold tracking-widest">行程</span>
+      </button>
+      <button @click="activeTab = 'wishlist'" :class="activeTab === 'wishlist' ? 'text-[#4b8f7e]' : 'text-gray-300'" class="flex flex-col items-center flex-1 py-2 transition relative">
+        <i class="fa-solid fa-heart text-xl mb-1.5"></i>
+        <span class="text-[10px] font-bold tracking-widest">景點庫</span>
+        <div v-if="wishlist.length > 0" class="absolute top-1 right-3 w-2 h-2 bg-red-400 rounded-full border border-white"></div>
+      </button>
+      <button @click="activeTab = 'split'" :class="activeTab === 'split' ? 'text-[#4b8f7e]' : 'text-gray-300'" class="flex flex-col items-center flex-1 py-2 transition">
+        <i class="fa-solid fa-wallet text-xl mb-1.5"></i>
+        <span class="text-[10px] font-bold tracking-widest">分帳</span>
+      </button>
+      <button @click="activeTab = 'map'" :class="activeTab === 'map' ? 'text-[#4b8f7e]' : 'text-gray-300'" class="flex flex-col items-center flex-1 py-2 transition">
+        <i class="fa-solid fa-map-location-dot text-xl mb-1.5"></i>
+        <span class="text-[10px] font-bold tracking-widest">地圖</span>
+      </button>
+    </nav>
+
+  </div>
+</div>
+
+<script>
+  delete L.Icon.Default.prototype._getIconUrl;
+  L.Icon.Default.mergeOptions({
+    iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
+    iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
+    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+  });
+
+  // 下方填寫 Firebase 專案設定（留空則不啟用登入與雲端）。Firestore 規則請見 firestore-rules.txt
+  const FIREBASE_CONFIG = {
+    apiKey: "AIzaSyDpQogz6ZmMo2w1hZOnPYpGnoXNLZYN-qw",
+    authDomain: "travel-assistant-c2093.firebaseapp.com",
+    projectId: "travel-assistant-c2093",
+    appId: "1:210907669888:web:847e702e3f97c320ac4d65"
+  };
+  const FIREBASE_ENABLED = typeof firebase !== 'undefined' && FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.apiKey.length > 0;
+  let firebaseAuth = null;
+  let firebaseDb = null;
+  if (FIREBASE_ENABLED) {
+    try {
+      firebase.initializeApp(FIREBASE_CONFIG);
+      firebaseAuth = firebase.auth();
+      firebaseDb = firebase.firestore();
+    } catch (e) { console.warn('Firebase init failed', e); }
+  }
+
+  const { createApp, ref, computed, watch, onMounted, nextTick } = Vue;
+
+  createApp({
+    setup() {
+      const firebaseEnabled = ref(FIREBASE_ENABLED);
+      const authLoading = ref(FIREBASE_ENABLED);
+      const user = ref(null);
+      const authEmail = ref('');
+      const authPassword = ref('');
+      const authMode = ref('signin');
+      const authError = ref('');
+      const authLoadingBtn = ref(false);
+      const authNickname = ref('');
+      const shareModal = ref({ show: false, email: '', message: '', error: false });
+
+      const doAuth = async () => {
+        authError.value = '';
+        if (!authEmail.value || !authPassword.value) { authError.value = '請填寫 Email 與密碼'; return; }
+        if (authMode.value === 'signup' && !authNickname.value.trim()) { authError.value = '請填寫暱稱'; return; }
+        authLoadingBtn.value = true;
+        try {
+          if (authMode.value === 'signin') {
+            await firebaseAuth.signInWithEmailAndPassword(authEmail.value.trim(), authPassword.value);
+          } else {
+            const cred = await firebaseAuth.createUserWithEmailAndPassword(authEmail.value.trim(), authPassword.value);
+            const uid = cred.user.uid;
+            const nick = authNickname.value.trim();
+            const emailLower = (cred.user.email || '').toLowerCase();
+            if (nick) {
+              await cred.user.updateProfile({ displayName: nick });
+            }
+            await firebaseDb.collection('users').doc(uid).set({ email: cred.user.email, displayName: nick || cred.user.displayName || '' });
+            await firebaseDb.collection('userEmails').doc(emailLower).set({ uid: uid });
+          }
+        } catch (e) {
+          if (e.code === 'auth/email-already-in-use') authError.value = '此 Email 已被註冊，請直接登入';
+          else if (e.code === 'auth/weak-password') authError.value = '密碼至少 6 個字元';
+          else if (e.code === 'auth/invalid-email') authError.value = '請輸入有效的 Email';
+          else if (e.code === 'auth/user-not-found' || e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential') authError.value = 'Email 或密碼錯誤';
+          else authError.value = '登入發生錯誤，請稍後再試';
+        }
+        authLoadingBtn.value = false;
+      };
+
+      const doSignOut = () => {
+        tripList.value.items = []; currentTripId.value = null;
+        tripConfig.value = { destination: '', startDate: today, days: 5, eurRate: 34.5 };
+        tripDays.value = []; itinerary.value = []; wishlist.value = []; expenses.value = [];
+        membersInput.value = '旅伴1, 旅伴2'; members.value = [];
+        hasSavedConfig.value = false; appState.value = 'setup'; tripList.value.show = false;
+        firebaseAuth.signOut();
+      };
+
+      const cancelSetup = () => {
+        // 取消建立新旅程，回到側欄
+        tripConfig.value = currentTripId.value
+          ? JSON.parse(localStorage.getItem(makeKey(currentTripId.value, 'config')) || '{}') || tripConfig.value
+          : tripConfig.value;
+        appState.value = 'main';
+        nextTick(function(){ tripList.value.show = true; });
+      };
+      const openShareModal = () => {
+        tripList.value.show = false;
+        shareModal.value = { show: true, email: '', message: '', error: false };
+      };
+
+      const inviteByEmail = async () => {
+        const email = (shareModal.value.email || '').trim().toLowerCase();
+        if (!email) { shareModal.value.message = '請輸入 Email'; shareModal.value.error = true; return; }
+        try {
+          const emailDoc = await firebaseDb.collection('userEmails').doc(email).get();
+          if (!emailDoc.exists) {
+            shareModal.value.message = '找不到此 Email 的帳號，請對方先註冊本 App'; shareModal.value.error = true; return;
+          }
+          const uid = emailDoc.data().uid;
+          const tripRef = firebaseDb.collection('trips').doc(currentTripId.value);
+          const tripSnap = await tripRef.get();
+          if (!tripSnap.exists) { shareModal.value.message = '行程不存在'; shareModal.value.error = true; return; }
+          const sharedWith = (tripSnap.data().sharedWith || []).slice();
+          if (sharedWith.indexOf(uid) !== -1) {
+            shareModal.value.message = '已邀請過此成員'; shareModal.value.error = false; return;
+          }
+          sharedWith.push(uid);
+          await tripRef.update({ sharedWith: sharedWith });
+          // 寄件人本地也立即標記共編
+          var sTrip = tripList.value.items.find(function(t){ return t.id === currentTripId.value; });
+          if (sTrip) sTrip.isShared = true;
+          shareModal.value.message = '已送出邀請！對方登入後即可在「我的旅程」看到此行程'; shareModal.value.error = false;
+          shareModal.value.email = '';
+        } catch (e) {
+          shareModal.value.message = e.message || '邀請失敗'; shareModal.value.error = true;
+        }
+      };
+
+      const tripListRefreshing = ref(false);
+      const refreshTripList = async () => {
+        if (tripListRefreshing.value) return;
+        tripListRefreshing.value = true;
+        try { await loadTripsFromFirestore(); }
+        finally { tripListRefreshing.value = false; }
+      };
+
+      const loadTripsFromFirestore = async () => {
+        if (!firebaseDb || !user.value) return;
+        const uid = user.value.uid;
+        const owned = await firebaseDb.collection('trips').where('ownerUid', '==', uid).get();
+        const shared = await firebaseDb.collection('trips').where('sharedWith', 'array-contains', uid).get();
+        const seen = {};
+        const items = [];
+        owned.docs.forEach(function(d) {
+          const dta = d.data();
+          seen[d.id] = true;
+          items.push({ id: d.id, destination: (dta.data && dta.data.config && dta.data.config.destination) || '', startDate: (dta.data && dta.data.config && dta.data.config.startDate) || '', days: (dta.data && dta.data.config && dta.data.config.days) || 5, ownerUid: dta.ownerUid });
+        });
+        shared.docs.forEach(function(d) {
+          if (seen[d.id]) return;
+          const dta = d.data();
+          items.push({ id: d.id, destination: (dta.data && dta.data.config && dta.data.config.destination) || '', startDate: (dta.data && dta.data.config && dta.data.config.startDate) || '', days: (dta.data && dta.data.config && dta.data.config.days) || 5, ownerUid: dta.ownerUid, isShared: true });
+        });
+        tripList.value.items = items;
+        if (items.length > 0) {
+          const firstId = currentTripId.value && items.some(function(t){ return t.id === currentTripId.value; })
+            ? currentTripId.value : items[0].id;
+          await loadTripData(firstId);
+          hasSavedConfig.value = true;
+        }
+        // 不管有無行程，都顯示側欄
+        appState.value = 'main';
+        nextTick(function(){ tripList.value.show = true; });
+      };
+
+      const saveTripToFirestore = async () => {
+        if (!firebaseDb || !user.value || !currentTripId.value) return;
+        const id = currentTripId.value;
+        const tripRef = firebaseDb.collection('trips').doc(id);
+        const snap = await tripRef.get();
+        const payload = {
+          data: {
+            config: tripConfig.value,
+            days: tripDays.value,
+            itinerary: itinerary.value,
+            wishlist: wishlist.value,
+            expenses: expenses.value,
+            members: membersInput.value
+          },
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+        if (snap.exists) {
+          const d = snap.data();
+          if (d.ownerUid !== user.value.uid && (!d.sharedWith || d.sharedWith.indexOf(user.value.uid) === -1)) return;
+          await tripRef.update(payload);
+        } else {
+          await tripRef.set({ ownerUid: user.value.uid, sharedWith: [], ...payload });
+        }
+      };
+
+      const loadTripFromFirestore = async (id) => {
+        if (!firebaseDb || !user.value) return false;
+        const snap = await firebaseDb.collection('trips').doc(id).get();
+        if (!snap.exists) return false;
+        const d = snap.data();
+        if (d.ownerUid !== user.value.uid && (!d.sharedWith || d.sharedWith.indexOf(user.value.uid) === -1)) return false;
+        const data = d.data || {};
+        tripConfig.value = data.config || { destination: '', startDate: today, days: 5, eurRate: 34.5 };
+        tripDays.value = data.days || [];
+        itinerary.value = (data.itinerary || []).slice();
+        itinerary.value.forEach(function(item, index) { if (item.order === undefined) item.order = index; });
+        wishlist.value = (data.wishlist || []).slice();
+        expenses.value = (data.expenses || []).slice();
+        expenses.value.forEach(function(e) { if (!e.involved) e.involved = []; });
+        membersInput.value = data.members || '';
+        members.value = membersInput.value
+          ? membersInput.value.split(',').map(function(m) { return m.trim(); }).filter(function(m) { return m; })
+          : [];
+        const myName = (user.value && (user.value.displayName || user.value.email)) || '';
+        if (myName && members.value.indexOf(myName) === -1) {
+          members.value.push(myName);
+          membersInput.value = members.value.join(', ');
+        }
+        return true;
+      };
+
+      const availableTags = [
+        { id: 'landmark', name: '地標景點', icon: 'fa-landmark', color: 'text-blue-600 bg-blue-50 border-blue-100' },
+        { id: 'restaurant', name: '美食餐廳', icon: 'fa-utensils', color: 'text-orange-600 bg-orange-50 border-orange-100' },
+        { id: 'museum', name: '藝術展館', icon: 'fa-palette', color: 'text-purple-600 bg-purple-50 border-purple-100' },
+        { id: 'nature', name: '自然景觀', icon: 'fa-tree', color: 'text-green-600 bg-green-50 border-green-100' },
+        { id: 'town', name: '特色小鎮', icon: 'fa-house-chimney', color: 'text-amber-600 bg-amber-50 border-amber-100' },
+        { id: 'activity', name: '體驗活動', icon: 'fa-ticket', color: 'text-rose-500 bg-rose-50 border-rose-100' },
+        { id: 'shopping', name: '逛街購物', icon: 'fa-bag-shopping', color: 'text-pink-600 bg-pink-50 border-pink-100' },
+        { id: 'accommodation', name: '住宿飯店', icon: 'fa-bed', color: 'text-indigo-600 bg-indigo-50 border-indigo-100' },
+        { id: 'transport', name: '交通轉乘', icon: 'fa-train-subway', color: 'text-gray-600 bg-gray-100 border-gray-200' },
+        { id: 'other', name: '其他', icon: 'fa-star', color: 'text-teal-600 bg-teal-50 border-teal-100' }
+      ];
+      
+      const getTagInfo = (tagId) => {
+        let tag = availableTags.find(function(t) { return t.id === tagId; });
+        return tag ? tag : availableTags[0];
+      };
+
+      const autoDetectTag = (osmClass, osmType) => {
+        if (!osmClass) return 'landmark';
+        if (osmClass === 'amenity' && ['restaurant', 'cafe', 'fast_food', 'bar', 'pub', 'food_court', 'ice_cream', 'biergarten'].indexOf(osmType) !== -1) return 'restaurant';
+        if (osmClass === 'tourism' && ['museum', 'gallery', 'artwork'].indexOf(osmType) !== -1) return 'museum';
+        if (osmClass === 'natural' || ['park', 'nature_reserve', 'garden', 'forest', 'beach', 'water'].indexOf(osmType) !== -1 || osmClass === 'waterway') return 'nature';
+        if (osmClass === 'place' || ['city', 'town', 'village', 'island'].indexOf(osmType) !== -1) return 'town';
+        if (osmClass === 'shop' || osmType === 'marketplace' || osmType === 'mall') return 'shopping';
+        if (osmClass === 'tourism' && ['hotel', 'motel', 'hostel', 'guest_house', 'chalet', 'apartment', 'camp_site'].indexOf(osmType) !== -1) return 'accommodation';
+        if (['public_transport', 'railway', 'aeroway'].indexOf(osmClass) !== -1 || ['bus_station', 'ferry_terminal', 'station', 'tram_stop'].indexOf(osmType) !== -1) return 'transport';
+        if (osmClass === 'leisure' || osmClass === 'sport') return 'activity';
+        return 'landmark'; 
+      };
+
+      const appState = ref('main'); 
+      const hasSavedConfig = ref(false);
+      const today = new Date().toISOString().split('T')[0];
+
+      const currentTripId = ref(null);
+      const tripList = ref({ show: false, items: [] });
+
+      const tripConfig = ref({ destination: '', startDate: today, days: 5, eurRate: 34.5 });
+      const tripDays = ref([]);
+      const activeTab = ref('itinerary');
+      const activeDay = ref(1);
+
+      const makeKey = (id, suffix) => 'travelTrip_' + id + '_' + suffix;
+
+      const loadTripData = async (id) => {
+        currentTripId.value = id;
+        if (firebaseEnabled.value && user.value && firebaseDb) {
+          const ok = await loadTripFromFirestore(id);
+          if (ok) return;
+        }
+        try {
+          const cfg = localStorage.getItem(makeKey(id, 'config'));
+          const days = localStorage.getItem(makeKey(id, 'days'));
+          const it = localStorage.getItem(makeKey(id, 'itinerary'));
+          const wl = localStorage.getItem(makeKey(id, 'wishlist'));
+          const ex = localStorage.getItem(makeKey(id, 'expenses'));
+          const mem = localStorage.getItem(makeKey(id, 'members'));
+          tripConfig.value = cfg ? JSON.parse(cfg) : { destination: '', startDate: today, days: 5, eurRate: 34.5 };
+          tripDays.value = days ? JSON.parse(days) : [];
+          itinerary.value = it ? JSON.parse(it) : [];
+          itinerary.value.forEach(function(item, index) { if (item.order === undefined) item.order = index; });
+          wishlist.value = wl ? JSON.parse(wl) : [];
+          expenses.value = ex ? JSON.parse(ex) : [];
+          expenses.value.forEach(function(e) { if (!e.involved) e.involved = []; });
+          membersInput.value = mem || '旅伴1, 旅伴2';
+          members.value = membersInput.value.split(',').map(function(m) { return m.trim(); }).filter(function(m) { return m; });
+        } catch (e) {}
+      };
+
+      const saveCurrentTripData = () => {
+        if (!currentTripId.value) return;
+        if (firebaseEnabled.value && user.value && firebaseDb) { saveTripToFirestore(); return; }
+        const id = currentTripId.value;
+        localStorage.setItem(makeKey(id, 'config'), JSON.stringify(tripConfig.value));
+        localStorage.setItem(makeKey(id, 'days'), JSON.stringify(tripDays.value));
+        localStorage.setItem(makeKey(id, 'itinerary'), JSON.stringify(itinerary.value));
+        localStorage.setItem(makeKey(id, 'wishlist'), JSON.stringify(wishlist.value));
+        localStorage.setItem(makeKey(id, 'expenses'), JSON.stringify(expenses.value));
+        localStorage.setItem(makeKey(id, 'members'), membersInput.value);
+      };
+
+      const itinerary = ref([]);
+      const wishlist = ref([]);
+      const newWishlistPlace = ref({ place: '', lat: null, lng: null, city: '', tag: 'landmark' });
+      const wishlistSortMode = ref('default');
+      const editingWishlistId = ref(null);
+      const wishlistEditName = ref('');
+      const wishlistEditTag = ref('landmark');
+      const isBatchMode = ref(false);
+      const selectedBatchItems = ref([]);
+      const scheduleModal = ref({ show: false, isBatch: false, batchItems: [], item: null, dayId: 1, time: '09:00', stayDuration: 120 });
+      const showAddItinerary = ref(false);
+      const newItinerary = ref({ time: '', stayDuration: 120, place: '', lat: null, lng: null, city: '', tag: 'landmark' });
+      const editingId = ref(null);
+      const editForm = ref({ time: '', stayDuration: 120, place: '', tag: 'landmark' });
+      const membersInput = ref('旅伴1, 旅伴2');
+      const members = ref([]);
+      const expenses = ref([]);
+      const newExpense = ref({ payer: '', amount: null, currency: 'EUR', note: '', involved: [] });
+      const showTwdSettlement = ref(false);
+
+      // Firebase 啟用：等 onAuthStateChanged，不讀 localStorage
+      if (!FIREBASE_ENABLED) {
+        try {
+          const raw = localStorage.getItem('travelTrip_index');
+          if (raw) tripList.value.items = JSON.parse(raw);
+        } catch (e) {}
+        if (tripList.value.items.length === 0) {
+          const oldConf = localStorage.getItem('euroTrip_config');
+          if (oldConf) {
+            const oc = JSON.parse(oldConf);
+            const id = Date.now().toString();
+            tripList.value.items = [{ id: id, destination: oc.destination || '', startDate: oc.startDate || today, days: oc.days || 5 }];
+            localStorage.setItem('travelTrip_index', JSON.stringify(tripList.value.items));
+            const oldKeys = { config: 'euroTrip_config', days: 'euroTrip_days', itinerary: 'euroTrip_itinerary', wishlist: 'euroTrip_wishlist', expenses: 'euroTrip_expenses', members: 'euroTrip_members' };
+            Object.keys(oldKeys).forEach(function(s) {
+              const val = localStorage.getItem(oldKeys[s]);
+              if (val) localStorage.setItem(makeKey(id, s), val);
+            });
+            currentTripId.value = id;
+          }
+          // 沒有舊資料：appState 維持 setup，不建立空行程
+        } else {
+          currentTripId.value = tripList.value.items[0].id;
+        }
+        if (currentTripId.value) loadTripData(currentTripId.value);
+        if (tripDays.value.length > 0 || (tripConfig.value.destination && tripConfig.value.destination.trim())) {
+          appState.value = 'main';
+          hasSavedConfig.value = true;
+          nextTick(function(){ tripList.value.show = true; });
+        }
+      }
+      
+      const currentDayName = computed(() => {
+        if (!tripDays.value || tripDays.value.length === 0) return '';
+        const d = tripDays.value.find(function(day) { return day.id === activeDay.value; });
+        return d && d.name ? d.name.split(' ')[0] : '';
+      });
+      
+      const tripDateRange = computed(() => {
+        if (!tripConfig.value.startDate || !tripConfig.value.days) return '';
+        const start = new Date(tripConfig.value.startDate);
+        const end = new Date(start);
+        end.setDate(start.getDate() + tripConfig.value.days - 1);
+        return start.toLocaleDateString() + ' - ' + end.toLocaleDateString();
+      });
+
+      const startPlanning = () => {
+        if (!tripConfig.value.startDate || !tripConfig.value.days || tripConfig.value.days < 1) return alert('請填寫正確的日期與天數！');
+        let generatedDays = [];
+        let startDateObj = new Date(tripConfig.value.startDate);
+        for (let i = 0; i < tripConfig.value.days; i++) {
+          let current = new Date(startDateObj);
+          current.setDate(startDateObj.getDate() + i);
+          generatedDays.push({ id: i + 1, name: 'Day ' + (i + 1) + ' (' + (current.getMonth() + 1) + '/' + current.getDate() + ')', date: current.toISOString() });
+        }
+        tripDays.value = generatedDays;
+        activeDay.value = 1;
+        const id = currentTripId.value || String(Date.now());
+        currentTripId.value = id;
+        const idx = tripList.value.items.findIndex(function(t) { return t.id === id; });
+        const existing = idx >= 0 ? tripList.value.items[idx] : null;
+        const summary = { id: id, destination: tripConfig.value.destination, startDate: tripConfig.value.startDate, days: tripConfig.value.days, ownerUid: existing && existing.ownerUid ? existing.ownerUid : (user.value ? user.value.uid : null) };
+        if (idx === -1) tripList.value.items.push(summary);
+        else tripList.value.items[idx] = summary;
+        if (!FIREBASE_ENABLED || !user.value) localStorage.setItem('travelTrip_index', JSON.stringify(tripList.value.items));
+        saveCurrentTripData();
+        appState.value = 'main';
+        hasSavedConfig.value = true;
+      };
+
+      const createNewTrip = () => {
+        tripConfig.value = { destination: '', startDate: today, days: 5, eurRate: tripConfig.value.eurRate || 34.5 };
+        tripDays.value = []; itinerary.value = []; wishlist.value = []; expenses.value = [];
+        membersInput.value = '旅伴1, 旅伴2';
+        members.value = membersInput.value.split(',').map(function(m){ return m.trim(); }).filter(function(m){ return m; });
+        currentTripId.value = null;
+        tripList.value.show = false;
+        hasSavedConfig.value = false;
+        appState.value = 'setup';
+      };
+
+      const switchTrip = async (id) => {
+        saveCurrentTripData();
+        await loadTripData(id);
+        tripList.value.show = false;
+        appState.value = 'main';
+      };
+
+      const deleteTrip = async (id) => {
+        if (!confirm('確定要刪除這個旅程嗎？資料將無法復原。')) return;
+        if (firebaseEnabled.value && user.value && firebaseDb) {
+          const snap = await firebaseDb.collection('trips').doc(id).get();
+          if (snap.exists && snap.data().ownerUid === user.value.uid) {
+            await firebaseDb.collection('trips').doc(id).delete();
+          }
+        }
+        ['config', 'days', 'itinerary', 'wishlist', 'expenses', 'members'].forEach(function(s) { localStorage.removeItem(makeKey(id, s)); });
+        tripList.value.items = tripList.value.items.filter(function(t) { return t.id !== id; });
+        if (!FIREBASE_ENABLED || !user.value) localStorage.setItem('travelTrip_index', JSON.stringify(tripList.value.items));
+        if (currentTripId.value === id) {
+          if (tripList.value.items.length > 0) loadTripData(tripList.value.items[0].id);
+          else {
+            currentTripId.value = null;
+            hasSavedConfig.value = false;
+            tripConfig.value = { destination: '', startDate: today, days: 5, eurRate: tripConfig.value.eurRate || 34.5 };
+            tripDays.value = []; itinerary.value = []; wishlist.value = []; expenses.value = [];
+            nextTick(function(){ tripList.value.show = true; });
+          }
+        }
+      };
+
+      const placeSuggestions = ref([]);
+      const isSearchingPlace = ref(false);
+      let searchTimeout = null;
+
+      const getWeatherIcon = (code) => {
+        if (code <= 3) return '☀️'; if (code <= 48) return '🌫️'; if (code <= 67) return '🌧️';
+        if (code <= 77) return '❄️'; if (code <= 82) return '🌧️'; if (code <= 86) return '❄️';
+        if (code <= 99) return '⛈️'; return '☁️';
+      };
+
+      const fetchGeoAndWeather = async (place, itemRef) => {
+        if (!itemRef.lat && itemRef.city !== '未知地區') { itemRef.weatherLoading = false; return; }
+        itemRef.weatherLoading = true;
+        try {
+          let latitude = itemRef.lat; let longitude = itemRef.lng;
+          if (!latitude || !longitude) {
+            const geoRes = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(place) + '&limit=1&addressdetails=1&accept-language=zh-TW,en');
+            const geoData = await geoRes.json();
+            if (geoData.length === 0) { itemRef.weatherLoading = false; return; }
+            latitude = parseFloat(geoData[0].lat); longitude = parseFloat(geoData[0].lon);
+            itemRef.lat = latitude; itemRef.lng = longitude;
+            
+            if (!itemRef.city || itemRef.city === '未知地區') {
+              const addr = geoData[0].address || {};
+              itemRef.city = addr.city || addr.town || addr.village || addr.county || addr.state || '未知地區';
+            }
+          }
+          const weatherRes = await fetch('https://api.open-meteo.com/v1/forecast?latitude=' + latitude + '&longitude=' + longitude + '&current_weather=true');
+          const weatherData = await weatherRes.json();
+          if (weatherData && weatherData.current_weather) {
+              itemRef.weather = { temp: Math.round(weatherData.current_weather.temperature), icon: getWeatherIcon(weatherData.current_weather.weathercode) };
+          }
+        } catch (e) {} finally { itemRef.weatherLoading = false; }
+      };
+
+      const handleSearchWishlist = (e) => {
+        newWishlistPlace.value.place = e.target.value;
+        newWishlistPlace.value.lat = null; newWishlistPlace.value.lng = null; newWishlistPlace.value.city = '';
+        
+        const qStr = e.target.value.trim().toUpperCase();
+        if (!qStr) { placeSuggestions.value = []; return; }
+
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(async () => {
+          isSearchingPlace.value = true;
+          
+          if (typeof OpenLocationCode !== 'undefined') {
+            if (OpenLocationCode.isFull(qStr)) {
+                const decoded = OpenLocationCode.decode(qStr);
+                placeSuggestions.value = [{ id: 'pc-full', name: '📍 精確座標 (Plus Code)', address: qStr, city: '自訂座標', lat: decoded.latitudeCenter, lng: decoded.longitudeCenter, autoTag: 'landmark' }];
+                isSearchingPlace.value = false; return;
+            }
+            const shortMatch = qStr.match(/^([23456789CFGHJMPQRVWX]{2,6}\+[23456789CFGHJMPQRVWX]{2,3})\s+(.+)$/);
+            if (shortMatch) {
+                try {
+                  const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(shortMatch[2]) + '&limit=1');
+                  const data = await res.json();
+                  if (data && data.length > 0) {
+                      const fullCode = OpenLocationCode.recoverNearest(shortMatch[1], parseFloat(data[0].lat), parseFloat(data[0].lon)); 
+                      const decoded = OpenLocationCode.decode(fullCode);
+                      let safeCity = '自訂座標';
+                      if (data[0].address && data[0].address.city) safeCity = data[0].address.city;
+                      else if (data[0].name) safeCity = data[0].name;
+                      placeSuggestions.value = [{ id: 'pc-short', name: '📍 精確座標 (由 ' + shortMatch[1] + ' 解析)', address: fullCode, city: safeCity, lat: decoded.latitudeCenter, lng: decoded.longitudeCenter, autoTag: 'landmark' }];
+                  } else {
+                      placeSuggestions.value = [];
+                  }
+                } catch(e) {}
+                isSearchingPlace.value = false; return;
+            }
+          }
+
+          try {
+            const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(e.target.value) + '&limit=5&addressdetails=1&accept-language=zh-TW,en');
+            const data = await res.json();
+            placeSuggestions.value = data.map(function(item) {
+              const addr = item.address || {};
+              const city = addr.city || addr.town || addr.village || addr.county || addr.state || '未知地區';
+              let itemName = item.name;
+              if (!itemName && item.display_name) itemName = item.display_name.split(',')[0];
+              return {
+                id: item.place_id, name: itemName,
+                address: item.display_name, city: city, lat: parseFloat(item.lat), lng: parseFloat(item.lon),
+                autoTag: autoDetectTag(item.class, item.type)
+              };
+            });
+          } catch (error) {} 
+          finally { isSearchingPlace.value = false; }
+        }, 500);
+      };
+
+      const selectWishlistPlace = (place) => {
+        if (place.lat === null) return; 
+        newWishlistPlace.value.place = place.name;
+        newWishlistPlace.value.lat = place.lat; newWishlistPlace.value.lng = place.lng; newWishlistPlace.value.city = place.city;
+        newWishlistPlace.value.tag = place.autoTag; 
+        placeSuggestions.value = []; 
+      };
+
+      const linkingMapId = ref(null);
+      const linkSearchQuery = ref('');
+      const linkSuggestions = ref([]);
+      const isLinkingSearch = ref(false);
+      let linkSearchTimeout = null;
+
+      const startLinkMap = (item) => { 
+        linkingMapId.value = item.id; linkSearchQuery.value = item.place; linkSuggestions.value = []; 
+      };
+      
+      const cancelLinkMap = () => { linkingMapId.value = null; linkSearchQuery.value = ''; linkSuggestions.value = []; };
+      
+      const handleLinkSearch = (e) => { 
+        linkSearchQuery.value = e.target.value; 
+        const qStr = e.target.value.trim().toUpperCase();
+        clearTimeout(linkSearchTimeout);
+        linkSearchTimeout = setTimeout(async () => {
+          isLinkingSearch.value = true;
+          
+          if (typeof OpenLocationCode !== 'undefined') {
+            if (OpenLocationCode.isFull(qStr)) {
+                const decoded = OpenLocationCode.decode(qStr);
+                linkSuggestions.value = [{ id: 'pc-full', name: '📍 精確座標 (Plus Code)', address: qStr, city: '自訂座標', lat: decoded.latitudeCenter, lng: decoded.longitudeCenter, autoTag: 'landmark' }];
+                isLinkingSearch.value = false; return;
+            }
+            const shortMatch = qStr.match(/^([23456789CFGHJMPQRVWX]{2,6}\+[23456789CFGHJMPQRVWX]{2,3})\s+(.+)$/);
+            if (shortMatch) {
+                try {
+                  const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(shortMatch[2]) + '&limit=1');
+                  const data = await res.json();
+                  if (data && data.length > 0) {
+                      const fullCode = OpenLocationCode.recoverNearest(shortMatch[1], parseFloat(data[0].lat), parseFloat(data[0].lon)); 
+                      const decoded = OpenLocationCode.decode(fullCode);
+                      let safeCity = '自訂座標';
+                      if (data[0].address && data[0].address.city) safeCity = data[0].address.city;
+                      else if (data[0].name) safeCity = data[0].name;
+                      linkSuggestions.value = [{ id: 'pc-short', name: '📍 精確座標', address: fullCode, city: safeCity, lat: decoded.latitudeCenter, lng: decoded.longitudeCenter, autoTag: 'landmark' }];
+                  } else { linkSuggestions.value = []; }
+                } catch(e) {}
+                isLinkingSearch.value = false; return;
+            }
+          }
+
+          try {
+            const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(e.target.value) + '&limit=5&addressdetails=1&accept-language=zh-TW,en');
+            const data = await res.json();
+            linkSuggestions.value = data.map(function(item) {
+              const addr = item.address || {};
+              const city = addr.city || addr.town || addr.village || addr.county || addr.state || '未知地區';
+              let itemName = item.name;
+              if (!itemName && item.display_name) itemName = item.display_name.split(',')[0];
+              return {
+                id: item.place_id, name: itemName,
+                address: item.display_name, city: city, lat: parseFloat(item.lat), lng: parseFloat(item.lon),
+                autoTag: autoDetectTag(item.class, item.type)
+              };
+            });
+          } catch (error) {} 
+          finally { isLinkingSearch.value = false; }
+        }, 500);
+      };
+
+      const confirmLinkMap = async (item, place) => {
+        if (!place.lat || !place.lng) return; 
+
+        const target = wishlist.value.find(function(w) { return w.id === item.id; });
+        if (target) {
+          target.lat = place.lat; target.lng = place.lng; target.city = place.city;
+          if (target.tag === 'landmark' && place.autoTag) target.tag = place.autoTag;
+          target.weatherLoading = true;
+          try {
+            const weatherRes = await fetch('https://api.open-meteo.com/v1/forecast?latitude=' + place.lat + '&longitude=' + place.lng + '&current_weather=true');
+            const weatherData = await weatherRes.json();
+            if (weatherData && weatherData.current_weather) {
+              target.weather = { temp: Math.round(weatherData.current_weather.temperature), icon: getWeatherIcon(weatherData.current_weather.weathercode) };
+            }
+          } catch (e) {} finally { target.weatherLoading = false; }
+        }
+        
+        const scheduledItems = itinerary.value.filter(function(i) { return i.place === item.place && !i.lat; });
+        if (scheduledItems.length > 0) {
+            scheduledItems.forEach(function(si) { 
+              si.lat = place.lat; si.lng = place.lng; si.city = place.city; si.weather = target ? target.weather : null; 
+              if (si.tag === 'landmark' && place.autoTag) si.tag = place.autoTag;
+            });
+            await updateRouteTimes();
+        }
+        cancelLinkMap(); if(activeTab.value === 'map') renderMapMarkers();
+      };
+
+      const isItemScheduled = (item) => {
+        return itinerary.value.some(function(i) { return (i.lat === item.lat && i.lat !== null && i.lng === item.lng) || i.place === item.place; });
+      };
+
+      const toggleBatchMode = () => {
+        isBatchMode.value = !isBatchMode.value;
+        if (!isBatchMode.value) selectedBatchItems.value = [];
+      };
+
+      const toggleBatchSelect = (item) => {
+        if (isItemScheduled(item)) return;
+        const idx = selectedBatchItems.value.findIndex(function(i) { return i.id === item.id; });
+        if (idx > -1) selectedBatchItems.value.splice(idx, 1);
+        else selectedBatchItems.value.push(item);
+      };
+
+      const isBatchSelected = (item) => {
+        return selectedBatchItems.value.some(function(i) { return i.id === item.id; });
+      };
+
+      const openBatchScheduleModal = () => {
+        if (selectedBatchItems.value.length === 0) return;
+        scheduleModal.value = { 
+          show: true, isBatch: true, batchItems: selectedBatchItems.value, 
+          dayId: activeDay.value, time: '09:00', stayDuration: 60 
+        };
+      };
+
+      const editWishlistName = (item) => { editingWishlistId.value = item.id; wishlistEditName.value = item.place; wishlistEditTag.value = item.tag || 'landmark'; };
+      const saveWishlistName = (item) => {
+        if (!wishlistEditName.value.trim()) return;
+        const target = wishlist.value.find(function(w) { return w.id === item.id; });
+        if (target) { target.place = wishlistEditName.value.trim(); target.tag = wishlistEditTag.value; }
+        const scheduledItem = itinerary.value.find(function(i) { return i.place === item.place; });
+        if(scheduledItem) { scheduledItem.place = wishlistEditName.value.trim(); scheduledItem.tag = wishlistEditTag.value; }
+        editingWishlistId.value = null;
+      };
+
+      const processedWishlist = computed(() => {
+        if (wishlistSortMode.value === 'default') { return [{ groupName: '', items: wishlist.value }]; } 
+        else if (wishlistSortMode.value === 'unscheduled') {
+          return [ { groupName: '未排入行程', items: wishlist.value.filter(function(item) { return !isItemScheduled(item); }) },
+                   { groupName: '已排入行程', items: wishlist.value.filter(function(item) { return isItemScheduled(item); }) } ];
+        } 
+        else if (wishlistSortMode.value === 'city') {
+          const groups = {};
+          wishlist.value.forEach(function(item) { const cityName = item.city || '其他地區'; if (!groups[cityName]) groups[cityName] = []; groups[cityName].push(item); });
+          return Object.keys(groups).sort().map(function(city) { return { groupName: city, items: groups[city] }; });
+        }
+        return [];
+      });
+
+      const addToWishlist = async () => {
+        if (!newWishlistPlace.value.place) return;
+
+        const coordMatch = newWishlistPlace.value.place.match(/^([-+]?\d{1,2}(?:\.\d+)?)[,\s]+([-+]?\d{1,3}(?:\.\d+)?)$/);
+        if (coordMatch && !newWishlistPlace.value.lat) {
+          newWishlistPlace.value.lat = parseFloat(coordMatch[1]); newWishlistPlace.value.lng = parseFloat(coordMatch[2]);
+          newWishlistPlace.value.city = '自訂座標點';
+        }
+
+        const exists = wishlist.value.some(function(w) { return w.place === newWishlistPlace.value.place; });
+        if (exists) {
+          newWishlistPlace.value.place = ''; newWishlistPlace.value.lat = null; newWishlistPlace.value.lng = null; newWishlistPlace.value.city = '';
+          placeSuggestions.value = []; return alert('景點庫中已經有這個地點囉！');
+        }
+
+        const newItem = {
+          id: Date.now(), place: newWishlistPlace.value.place, lat: newWishlistPlace.value.lat, lng: newWishlistPlace.value.lng,
+          city: newWishlistPlace.value.city || '自訂地區', tag: newWishlistPlace.value.tag || 'landmark', weather: null, weatherLoading: false
+        };
+        wishlist.value.unshift(newItem); 
+        newWishlistPlace.value.place = ''; newWishlistPlace.value.lat = null; newWishlistPlace.value.lng = null; newWishlistPlace.value.city = '';
+        newWishlistPlace.value.tag = 'landmark'; placeSuggestions.value = [];
+        
+        await fetchGeoAndWeather(wishlist.value[0].place, wishlist.value[0]);
+        if(activeTab.value === 'map') renderMapMarkers();
+      };
+
+      const deleteWishlist = (id) => { 
+        wishlist.value = wishlist.value.filter(function(item) { return item.id !== id; }); 
+        selectedBatchItems.value = selectedBatchItems.value.filter(function(item) { return item.id !== id; });
+        if(activeTab.value === 'map') renderMapMarkers(); 
+      };
+
+      const isTargetDayEmpty = computed(() => { return itinerary.value.filter(function(i) { return i.dayId === scheduleModal.value.dayId; }).length === 0; });
+      const openScheduleModal = (item) => { scheduleModal.value = { show: true, isBatch: false, batchItems: [], item: item, dayId: activeDay.value, time: '09:00', stayDuration: 120 }; };
+
+      const confirmSchedule = async () => {
+        if (isTargetDayEmpty.value && !scheduleModal.value.time) return alert('請輸入第一站的出發時間！');
+
+        let baseOrder = 0;
+        const currentDayArr = itinerary.value.filter(function(i) { return i.dayId === scheduleModal.value.dayId; });
+        if (currentDayArr.length > 0) {
+            let maxOrder = 0;
+            for(let i=0; i<currentDayArr.length; i++) {
+                if ((currentDayArr[i].order || 0) > maxOrder) maxOrder = currentDayArr[i].order;
+            }
+            baseOrder = maxOrder + 1;
+        }
+
+        if (scheduleModal.value.isBatch) {
+            scheduleModal.value.batchItems.forEach(function(targetItem) {
+                itinerary.value.push({
+                    id: Date.now() + Math.random(), dayId: scheduleModal.value.dayId, time: isTargetDayEmpty.value && baseOrder === 0 ? scheduleModal.value.time : '',
+                    stayDuration: scheduleModal.value.stayDuration, place: targetItem.place, lat: targetItem.lat, lng: targetItem.lng,
+                    city: targetItem.city || '未知地區', tag: targetItem.tag || 'landmark', weather: targetItem.weather, weatherLoading: false, 
+                    isEditing: false, travelTime: null, routeKey: '', transportMode: 'driving', order: baseOrder++
+                });
+            });
+            isBatchMode.value = false; selectedBatchItems.value = [];
+        } else {
+            const targetItem = scheduleModal.value.item;
+            itinerary.value.push({
+                id: Date.now(), dayId: scheduleModal.value.dayId, time: isTargetDayEmpty.value ? scheduleModal.value.time : '',
+                stayDuration: scheduleModal.value.stayDuration, place: targetItem.place, lat: targetItem.lat, lng: targetItem.lng,
+                city: targetItem.city || '未知地區', tag: targetItem.tag || 'landmark', weather: targetItem.weather, weatherLoading: false, 
+                isEditing: false, travelTime: null, routeKey: '', transportMode: 'driving', order: baseOrder
+            });
+        }
+        scheduleModal.value.show = false; activeDay.value = scheduleModal.value.dayId; activeTab.value = 'itinerary';
+        await updateRouteTimes(); if(activeTab.value === 'map') renderMapMarkers();
+      };
+
+      const sortedItinerary = computed(() => { 
+        return itinerary.value.filter(function(item) { return item.dayId === activeDay.value; }).sort(function(a, b) { return (a.order || 0) - (b.order || 0); }); 
+      });
+
+      const addMinutes = (timeStr, mins) => {
+        if (!timeStr) return ''; 
+        const parts = timeStr.split(':');
+        const date = new Date(); date.setHours(parseInt(parts[0]), parseInt(parts[1]) + (mins || 0), 0, 0); 
+        return date.toTimeString().substring(0, 5);
+      };
+
+      const timelineItinerary = computed(() => {
+        const list = sortedItinerary.value; let result = []; let currentStartTime = '';
+        list.forEach(function(item, index) {
+          let displayItem = Object.assign({}, item);
+          if (index === 0) { currentStartTime = item.time || '09:00'; } 
+          else { const prev = list[index-1]; currentStartTime = addMinutes(currentStartTime, (parseInt(prev.stayDuration) || 0) + (item.travelTime || 0)); }
+          displayItem.calculatedStartTime = currentStartTime; displayItem.calculatedEndTime = addMinutes(currentStartTime, parseInt(item.stayDuration) || 0);
+          result.push(displayItem);
+        });
+        return result;
+      });
+
+      const updateRouteTimes = async () => {
+        const list = sortedItinerary.value; if (list.length <= 1) return; let hasUpdates = false;
+        for (let i = 1; i < list.length; i++) {
+          const prev = list[i-1]; const curr = itinerary.value.find(function(item) { return item.id === list[i].id; }); 
+          if (!curr.transportMode) curr.transportMode = 'driving'; 
+          const routeKey = prev.lat + ',' + prev.lng + '-' + curr.lat + ',' + curr.lng + '-' + curr.transportMode;
+          if (!curr.lat || !curr.lng || !prev.lat || !prev.lng) { if(curr.travelTime !== null) { curr.travelTime = null; hasUpdates = true; } continue; }
+          if (curr.routeKey !== routeKey) {
+            try {
+              const profile = curr.transportMode === 'walking' ? 'foot' : 'driving';
+              const res = await fetch('https://router.project-osrm.org/route/v1/' + profile + '/' + prev.lng + ',' + prev.lat + ';' + curr.lng + ',' + curr.lat + '?overview=false');
+              const data = await res.json();
+              if(data.routes && data.routes.length > 0) {
+                let rawMins = data.routes[0].duration / 60; curr.travelTime = curr.transportMode === 'walking' ? Math.ceil(rawMins * 1.1 + 2) : Math.ceil(rawMins * 1.3 + 5);
+              } else { curr.travelTime = 0; }
+              curr.routeKey = routeKey; hasUpdates = true;
+            } catch(e) { curr.travelTime = 0; curr.routeKey = routeKey; hasUpdates = true; }
+          }
+        }
+        if (hasUpdates && currentTripId.value) saveCurrentTripData();
+      };
+
+      const toggleTransport = async (item) => {
+        const targetItem = itinerary.value.find(function(i) { return i.id === item.id; });
+        if(targetItem) { targetItem.transportMode = targetItem.transportMode === 'walking' ? 'driving' : 'walking'; targetItem.routeKey = ''; await updateRouteTimes(); }
+      };
+
+      const editItinerary = (item) => { editingId.value = item.id; editForm.value = { time: item.time || '', stayDuration: item.stayDuration, place: item.place, tag: item.tag || 'landmark' }; };
+      const deleteItinerary = async (id) => { itinerary.value = itinerary.value.filter(function(item) { return item.id !== id; }); await updateRouteTimes(); if(activeTab.value === 'map') renderMapMarkers(); };
+      
+      const saveItinerary = async (item) => { 
+        const realItem = itinerary.value.find(function(i) { return i.id === item.id; }); if (!realItem) return;
+        const placeChanged = realItem.place !== editForm.value.place;
+        realItem.time = editForm.value.time; realItem.stayDuration = editForm.value.stayDuration; realItem.place = editForm.value.place; realItem.tag = editForm.value.tag;
+        editingId.value = null; 
+        const wItem = wishlist.value.find(function(w) { return w.lat === realItem.lat && w.lng === realItem.lng && w.lat !== null; }) || wishlist.value.find(function(w) { return w.place === item.place; });
+        if (wItem) { wItem.place = realItem.place; wItem.tag = realItem.tag; }
+        if(placeChanged) { realItem.weather = null; realItem.lat = null; realItem.lng = null; realItem.city = ''; realItem.routeKey = ''; await fetchGeoAndWeather(realItem.place, realItem); }
+        await updateRouteTimes(); if(activeTab.value === 'map') renderMapMarkers();
+      };
+
+      const itineraryListRef = ref(null);
+      let sortableInstance = null;
+
+      const initSortable = () => {
+        if (!itineraryListRef.value || typeof Sortable === 'undefined') return;
+        if (sortableInstance) sortableInstance.destroy();
+        
+        sortableInstance = Sortable.create(itineraryListRef.value, {
+          handle: '.drag-handle',
+          animation: 200,
+          ghostClass: 'sortable-ghost',
+          onEnd: (evt) => {
+            const oldIndex = evt.oldIndex; const newIndex = evt.newIndex; const itemNode = evt.item;
+            if (oldIndex === newIndex) return;
+
+            const parent = itemNode.parentNode;
+            if (newIndex > oldIndex) { parent.insertBefore(itemNode, parent.children[oldIndex]); } 
+            else { parent.insertBefore(itemNode, parent.children[oldIndex + 1]); }
+
+            const currentDayItems = [];
+            for(let i=0; i<sortedItinerary.value.length; i++){ currentDayItems.push(sortedItinerary.value[i]); }
+            const movedItem = currentDayItems.splice(oldIndex, 1)[0];
+            currentDayItems.splice(newIndex, 0, movedItem);
+
+            currentDayItems.forEach(function(it, idx) {
+                const realIt = itinerary.value.find(function(i) { return i.id === it.id; });
+                if (realIt) realIt.order = idx;
+            });
+
+            let newArr = [];
+            for(let j=0; j<itinerary.value.length; j++){ newArr.push(itinerary.value[j]); }
+            itinerary.value = newArr;
+            updateRouteTimes();
+          }
+        });
+      };
+
+      // 當名單變更時，預設勾選所有人
+      watch(members, function(newMembers) {
+          newExpense.value.involved = newMembers.slice();
+      }, { immediate: true });
+
+      const updateMembers = () => { 
+          members.value = membersInput.value.split(',').map(function(m) { return m.trim(); }).filter(function(m) { return m; }); 
+          newExpense.value.involved = members.value.slice();
+      };
+
+      const convertToTWD = (amount, currency) => { return currency === 'TWD' ? amount : Math.round(amount * tripConfig.value.eurRate); };
+      
+      const addExpense = () => {
+        if (!newExpense.value.payer || !newExpense.value.amount || !newExpense.value.note) return alert('請填寫完整資訊！');
+        if (newExpense.value.involved.length === 0) return alert('請至少選擇一位參與分帳的人！');
+
+        expenses.value.push({ 
+          id: Date.now(), 
+          payer: newExpense.value.payer, 
+          originalAmount: newExpense.value.amount, 
+          currency: newExpense.value.currency, 
+          twdAmount: convertToTWD(newExpense.value.amount, newExpense.value.currency), 
+          note: newExpense.value.note,
+          involved: newExpense.value.involved.slice() // 儲存勾選項
+        });
+        newExpense.value.amount = null; 
+        newExpense.value.note = '';
+        newExpense.value.involved = members.value.slice();
+      };
+
+      const deleteExpense = (id) => { expenses.value = expenses.value.filter(function(e) { return e.id !== id; }); };
+
+      const totalExpenseTwd = computed(() => expenses.value.reduce(function(sum, exp) { return sum + exp.twdAmount; }, 0));
+      
+      const totalExpenseEur = computed(() => {
+        let sum = 0;
+        let rate = tripConfig.value.eurRate || 34.5;
+        for (let i = 0; i < expenses.value.length; i++) {
+            let exp = expenses.value[i];
+            if (exp.currency === 'EUR') {
+                sum += exp.originalAmount;
+            } else {
+                sum += (exp.originalAmount / rate);
+            }
+        }
+        return sum;
+      });
+
+      const settlements = computed(() => {
+        if (members.value.length === 0 || expenses.value.length === 0) return [];
+        let rate = tripConfig.value.eurRate || 34.5;
+        let results = [];
+
+        if (showTwdSettlement.value) {
+            // ======================================
+            // 模式 1: 全部轉為台幣大結算
+            // ======================================
+            let balances = {}; 
+            members.value.forEach(function(m) { balances[m] = 0; });
+            
+            expenses.value.forEach(function(exp) {
+               let amountTwd = exp.currency === 'TWD' ? exp.originalAmount : exp.originalAmount * rate;
+               
+               if(balances[exp.payer] !== undefined) {
+                    balances[exp.payer] += amountTwd;
+               } else { 
+                    balances[exp.payer] = amountTwd; 
+                    members.value.push(exp.payer);
+               }
+               
+               let splitGroup = (exp.involved && exp.involved.length > 0) ? exp.involved : members.value;
+               let splitAmount = amountTwd / splitGroup.length;
+               
+               splitGroup.forEach(function(m) {
+                  if (balances[m] !== undefined) {
+                      balances[m] -= splitAmount;
+                  } else {
+                      balances[m] = -splitAmount;
+                      members.value.push(m);
+                  }
+               });
+            });
+
+            let balancesArr = Object.keys(balances).map(function(m) { return { name: m, balance: balances[m] }; });
+            let debtors = balancesArr.filter(function(b) { return b.balance < -0.5; }).sort(function(a, b) { return a.balance - b.balance; });
+            let creditors = balancesArr.filter(function(b) { return b.balance > 0.5; }).sort(function(a, b) { return b.balance - a.balance; });
+            
+            let i = 0, j = 0;
+            while (i < debtors.length && j < creditors.length) {
+              let debtor = debtors[i], creditor = creditors[j];
+              let amountToPay = Math.min(Math.abs(debtor.balance), creditor.balance);
+              
+              if (amountToPay > 0.5) {
+                  results.push(debtor.name + ' 需給 ' + creditor.name + ' NT$ ' + Math.round(amountToPay));
+              }
+              
+              debtor.balance += amountToPay; 
+              creditor.balance -= amountToPay;
+              if (Math.abs(debtor.balance) < 0.5) i++; 
+              if (creditor.balance < 0.5) j++;
+            }
+
+        } else {
+            // ======================================
+            // 模式 2: 不換匯，歐元與台幣分別結算
+            // ======================================
+            ['EUR', 'TWD'].forEach(function(currencyType) {
+                 let balances = {}; 
+                 members.value.forEach(function(m) { balances[m] = 0; });
+
+                 expenses.value.forEach(function(exp) {
+                     if (exp.currency !== currencyType) return;
+                     
+                     let amount = exp.originalAmount;
+                     if(balances[exp.payer] !== undefined) {
+                        balances[exp.payer] += amount;
+                     } else { 
+                        balances[exp.payer] = amount; 
+                        members.value.push(exp.payer); 
+                     }
+                     
+                     let splitGroup = (exp.involved && exp.involved.length > 0) ? exp.involved : members.value;
+                     let splitAmount = amount / splitGroup.length;
+                     
+                     splitGroup.forEach(function(m) {
+                        if (balances[m] !== undefined) {
+                            balances[m] -= splitAmount;
+                        } else {
+                            balances[m] = -splitAmount;
+                            members.value.push(m);
+                        }
+                     });
+                 });
+
+                 let balancesArr = Object.keys(balances).map(function(m) { return { name: m, balance: balances[m] }; });
+                 let debtors = balancesArr.filter(function(b) { return b.balance < -0.01; }).sort(function(a, b) { return a.balance - b.balance; });
+                 let creditors = balancesArr.filter(function(b) { return b.balance > 0.01; }).sort(function(a, b) { return b.balance - a.balance; });
+                 
+                 let i = 0, j = 0;
+                 while (i < debtors.length && j < creditors.length) {
+                   let debtor = debtors[i], creditor = creditors[j];
+                   let amountToPay = Math.min(Math.abs(debtor.balance), creditor.balance);
+                   
+                   let displayStr = currencyType === 'EUR' ? '€ ' + amountToPay.toFixed(2) : 'NT$ ' + Math.round(amountToPay);
+                   
+                   if (amountToPay > 0.01) {
+                       results.push(debtor.name + ' 需給 ' + creditor.name + ' ' + displayStr);
+                   }
+                   
+                   debtor.balance += amountToPay; 
+                   creditor.balance -= amountToPay;
+                   if (Math.abs(debtor.balance) < 0.01) i++; 
+                   if (creditor.balance < 0.01) j++;
+                 }
+            });
+        }
+        return results;
+      });
+      // ==========================
+
+      const mapDayFilter = ref('all');
+      
+      const getDayColor = (dayIndex) => {
+        const colors = [
+          { bg: 'bg-teal-600', border: 'border-t-teal-600' },
+          { bg: 'bg-blue-500', border: 'border-t-blue-500' },
+          { bg: 'bg-rose-500', border: 'border-t-rose-500' },
+          { bg: 'bg-amber-500', border: 'border-t-amber-500' },
+          { bg: 'bg-purple-500', border: 'border-t-purple-500' },
+          { bg: 'bg-emerald-500', border: 'border-t-emerald-500' },
+          { bg: 'bg-pink-500', border: 'border-t-pink-500' },
+          { bg: 'bg-indigo-500', border: 'border-t-indigo-500' }
+        ];
+        return colors[(dayIndex - 1) % colors.length];
+      };
+
+      const moveItineraryOrder = async (itemId, direction) => {
+        const item = itinerary.value.find(function(i) { return i.id === itemId; });
+        if (!item) return;
+        const dayItems = itinerary.value.filter(function(i) { return i.dayId === item.dayId; }).sort(function(a,b) { return (a.order||0) - (b.order||0); });
+        const index = dayItems.findIndex(function(i) { return i.id === itemId; });
+        
+        if (direction === -1 && index > 0) {
+          const temp = dayItems[index].order;
+          dayItems[index].order = dayItems[index-1].order;
+          dayItems[index-1].order = temp;
+        } else if (direction === 1 && index < dayItems.length - 1) {
+          const temp = dayItems[index].order;
+          dayItems[index].order = dayItems[index+1].order;
+          dayItems[index+1].order = temp;
+        }
+        await updateRouteTimes();
+        if(activeTab.value === 'map') renderMapMarkers();
+      };
+
+      let map = null; let markers = []; let userMarker = null;
+      
+      const initMap = () => {
+        if (map) return;
+        map = L.map('leafletMap', { zoomControl: false }).setView([48.8566, 2.3522], 13);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
+      };
+      
+      const renderMapMarkers = () => {
+        if (!map) initMap();
+        markers.forEach(function(m) { map.removeLayer(m); }); 
+        markers = []; 
+        const bounds = [];
+
+        itinerary.value.forEach(function(item) {
+          if (mapDayFilter.value !== 'all' && mapDayFilter.value !== item.dayId) return;
+
+          if (item.lat && item.lng) {
+            const dayIndex = tripDays.value.findIndex(function(d) { return d.id === item.dayId; }) + 1;
+            const dayObj = tripDays.value.find(function(d) { return d.id === item.dayId; });
+            const dayStr = dayObj ? dayObj.name.split(' ')[0] : ('Day ' + dayIndex);
+            const color = getDayColor(dayIndex);
+            
+            const dayItems = itinerary.value.filter(function(i) { return i.dayId === item.dayId; }).sort(function(a,b){ return (a.order||0) - (b.order||0); });
+            const orderIndex = dayItems.findIndex(function(i) { return i.id === item.id; }) + 1;
+
+            let markerText = '';
+            let textSize = '';
+            let popupDesc = '';
+            let moveButtons = '';
+
+            if (mapDayFilter.value === 'all') {
+                markerText = 'D' + dayIndex;
+                textSize = 'text-[11px]';
+                popupDesc = dayStr;
+                moveButtons = '';
+            } else {
+                markerText = orderIndex;
+                textSize = 'text-sm';
+                popupDesc = dayStr + ' - 第 ' + orderIndex + ' 站';
+                moveButtons = '<div class="flex space-x-2 justify-center mt-2"><button class="map-move-up bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-lg text-[10px] font-bold transition flex-1">向前移</button><button class="map-move-down bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-lg text-[10px] font-bold transition flex-1">向後移</button></div>';
+            }
+
+            const htmlStr = '<div class="' + color.bg + ' text-white w-8 h-8 rounded-full flex items-center justify-center font-bold shadow-lg border-2 border-white -ml-4 -mt-8 relative z-20 ' + textSize + '"><div class="absolute -bottom-2 w-0 h-0 border-l-[6px] border-r-[6px] border-t-[8px] border-l-transparent border-r-transparent ' + color.border + '"></div>' + markerText + '</div>';
+            const customIcon = L.divIcon({ className: 'custom-div-icon', html: htmlStr });
+            
+            const popupDiv = document.createElement('div');
+            popupDiv.className = 'text-center min-w-[120px] pb-1';
+            popupDiv.innerHTML = '<div class="font-bold text-gray-800 mb-1">' + item.place + '</div><div class="text-[10px] text-gray-500">' + popupDesc + '</div>' + moveButtons;
+            
+            const marker = L.marker([item.lat, item.lng], { icon: customIcon }).addTo(map);
+            marker.bindPopup(popupDiv);
+            
+            marker.on('popupopen', () => {
+              const btnUp = popupDiv.querySelector('.map-move-up');
+              if (btnUp) btnUp.onclick = () => { moveItineraryOrder(item.id, -1); map.closePopup(); };
+              const btnDown = popupDiv.querySelector('.map-move-down');
+              if (btnDown) btnDown.onclick = () => { moveItineraryOrder(item.id, 1); map.closePopup(); };
+            });
+
+            markers.push(marker); bounds.push([item.lat, item.lng]);
+          }
+        });
+
+        wishlist.value.forEach(function(item) {
+          if (isItemScheduled(item)) return;
+          if (mapDayFilter.value !== 'all' && mapDayFilter.value !== 'wishlist') return;
+
+          if (item.lat && item.lng) {
+            const tagInfo = getTagInfo(item.tag);
+            let colorClass = tagInfo && tagInfo.color ? tagInfo.color.split(' ')[0] : 'bg-gray-100';
+            let iconClass = tagInfo && tagInfo.icon ? tagInfo.icon : 'fa-star';
+            
+            const htmlStr = '<div class="' + colorClass + ' bg-white w-7 h-7 rounded-full flex items-center justify-center shadow-lg border-2 border-white -ml-3.5 -mt-7 relative z-10"><div class="absolute -bottom-1.5 w-0 h-0 border-l-[5px] border-r-[5px] border-t-[7px] border-l-transparent border-r-transparent border-t-white"></div><i class="fa-solid ' + iconClass + ' text-[10px]"></i></div>';
+            const wishlistIcon = L.divIcon({ className: 'custom-div-icon', html: htmlStr });
+            
+            const popupDiv = document.createElement('div');
+            popupDiv.className = 'text-center min-w-[120px] pb-1';
+            popupDiv.innerHTML = '<div class="font-bold text-gray-800 mb-3">' + item.place + '</div><button class="map-add-btn bg-[#4b8f7e] hover:bg-[#3d7567] text-white px-4 py-2 rounded-xl text-xs font-bold shadow-md transition w-full">排入行程</button>';
+            
+            const marker = L.marker([item.lat, item.lng], { icon: wishlistIcon }).addTo(map);
+            marker.bindPopup(popupDiv);
+            
+            marker.on('popupopen', () => {
+              const btn = popupDiv.querySelector('.map-add-btn');
+              if (btn) btn.onclick = () => { openScheduleModal(item); map.closePopup(); };
+            });
+
+            markers.push(marker); bounds.push([item.lat, item.lng]);
+          }
+        });
+
+        if (bounds.length > 0) map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+      };
+
+      const locateUser = () => {
+        if (!navigator.geolocation) return alert('不支援定位');
+        navigator.geolocation.getCurrentPosition(function(pos) {
+          const latitude = pos.coords.latitude;
+          const longitude = pos.coords.longitude;
+          if (!map) initMap();
+          if(userMarker) map.removeLayer(userMarker);
+          const userIcon = L.divIcon({ className: 'user-icon', html: '<div class="w-4 h-4 bg-blue-500 rounded-full border-2 border-white shadow-[0_0_0_4px_rgba(59,130,246,0.3)] animate-pulse -ml-2 -mt-2"></div>' });
+          userMarker = L.marker([latitude, longitude], { icon: userIcon }).addTo(map);
+          map.setView([latitude, longitude], 15);
+        });
+      };
+
+      watch(mapDayFilter, () => { if(activeTab.value === 'map') renderMapMarkers(); });
+      watch(activeTab, (newTab) => { 
+        if (newTab === 'map') nextTick(() => { if (!map) initMap(); map.invalidateSize(); renderMapMarkers(); }); 
+        if (newTab === 'itinerary') nextTick(initSortable);
+      });
+      watch(activeDay, async () => { editingId.value = null; await updateRouteTimes(); nextTick(initSortable); if (activeTab.value === 'map') nextTick(renderMapMarkers); });
+      watch(timelineItinerary, () => { nextTick(initSortable); });
+
+      watch(itinerary, function() { if (currentTripId.value) saveCurrentTripData(); }, { deep: true });
+      watch(wishlist, function() { if (currentTripId.value) saveCurrentTripData(); }, { deep: true });
+      watch(expenses, function() { if (currentTripId.value) saveCurrentTripData(); }, { deep: true });
+      watch(membersInput, function() { if (currentTripId.value) saveCurrentTripData(); });
+
+      onMounted(function() {
+        if (firebaseAuth) {
+          firebaseAuth.onAuthStateChanged(async function(u) {
+            user.value = u;
+            authLoading.value = false;
+            if (u) {
+              if (!u.displayName && u.email) {
+                try {
+                  const nick = u.email.split('@')[0];
+                  if (nick) {
+                    await u.updateProfile({ displayName: nick });
+                    await firebaseDb.collection('users').doc(u.uid).set(
+                      { email: u.email, displayName: nick },
+                      { merge: true }
+                    );
+                    user.value = firebaseAuth.currentUser;
+                  }
+                } catch (e) {}
+              }
+              await loadTripsFromFirestore();
+            }
+          });
+        } else if (firebaseEnabled.value) {
+          authLoading.value = false;
+        }
+        updateRouteTimes();
+        nextTick(initSortable);
+      });
+
+      return {
+        appState, hasSavedConfig, tripConfig, tripDateRange, startPlanning, cancelSetup, activeTab, tripDays, activeDay, currentDayName,
+        currentTripId, tripList, tripListRefreshing, refreshTripList, createNewTrip, switchTrip, deleteTrip,
+        firebaseEnabled, user, authLoading, authEmail, authPassword, authMode, authError, authLoadingBtn, authNickname, doAuth, doSignOut,
+        shareModal, openShareModal, inviteByEmail,
+        availableTags, getTagInfo,
+        itinerary, showAddItinerary, newItinerary, sortedItinerary, timelineItinerary, deleteItinerary,
+        editingId, editForm, editItinerary, saveItinerary, toggleTransport, isItemScheduled,
+        itineraryListRef,
+        wishlist, newWishlistPlace, handleSearchWishlist, addToWishlist, deleteWishlist, selectWishlistPlace,
+        wishlistSortMode, processedWishlist, editingWishlistId, wishlistEditName, wishlistEditTag, editWishlistName, saveWishlistName,
+        isBatchMode, selectedBatchItems, toggleBatchMode, toggleBatchSelect, isBatchSelected, openBatchScheduleModal,
+        linkingMapId, linkSearchQuery, linkSuggestions, isLinkingSearch, startLinkMap, cancelLinkMap, handleLinkSearch, confirmLinkMap,
+        scheduleModal, isTargetDayEmpty, openScheduleModal, confirmSchedule,
+        placeSuggestions, isSearchingPlace, membersInput, members, expenses, newExpense, updateMembers, addExpense, deleteExpense,
+        totalExpenseTwd, totalExpenseEur, showTwdSettlement, settlements, locateUser,
+        mapDayFilter
+      };
+    }
+  }).mount('#app');
+</script>
+</body>
+</html>
