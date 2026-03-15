@@ -394,7 +394,7 @@
               <input :value="newWishlistPlace.place" @input="handleSearchWishlist" @keyup.enter="addToWishlist" type="text" class="w-full p-3.5 bg-gray-50 text-gray-700 border-none rounded-xl outline-none text-sm focus:ring-2 focus:ring-[#4b8f7e] pr-10 font-medium" placeholder="搜尋名稱，或貼上 Plus Code...">
               
               <div v-if="isSearchingPlace" class="absolute right-3.5 top-3.5 text-gray-300"><i class="fa-solid fa-spinner fa-spin"></i></div>
-              <div v-else-if="placeSuggestions.length > 0" @click="placeSuggestions = []" class="absolute right-3.5 top-3.5 text-gray-400 hover:text-gray-600 cursor-pointer transition"><i class="fa-solid fa-xmark text-lg"></i></div>
+              <div v-else-if="placeSuggestions.length > 0 || newWishlistPlace.place" @click="placeSuggestions = []; newWishlistPlace.place = ''; newWishlistPlace.lat = null; newWishlistPlace.lng = null; newWishlistPlace.city = '';" class="absolute right-3.5 top-3.5 text-gray-400 hover:text-gray-600 cursor-pointer transition"><i class="fa-solid fa-xmark text-lg"></i></div>
               <div v-else class="absolute right-3.5 top-3.5 text-gray-300"><i class="fa-solid fa-magnifying-glass"></i></div>
               
               <ul v-if="placeSuggestions.length > 0" class="absolute z-50 w-full bg-white border border-gray-200 rounded-xl shadow-[0_15px_30px_-5px_rgba(0,0,0,0.15)] mt-2 max-h-56 overflow-y-auto">
@@ -525,8 +525,8 @@
                     </button>
                   </div>
 
-                  <button v-if="!isItemScheduled(item)" @click.stop="openScheduleModal(item)" class="bg-teal-50 text-[#4b8f7e] border border-teal-100 hover:bg-[#4b8f7e] hover:text-white px-4 py-1.5 rounded-lg text-xs font-bold tracking-wider transition shadow-sm flex items-center">
-                    <i class="fa-solid fa-calendar-plus mr-1.5"></i>排入行程
+                  <button @click.stop="openScheduleModal(item)" class="bg-teal-50 text-[#4b8f7e] border border-teal-100 hover:bg-[#4b8f7e] hover:text-white px-4 py-1.5 rounded-lg text-xs font-bold tracking-wider transition shadow-sm flex items-center">
+                    <i class="fa-solid fa-calendar-plus mr-1.5"></i>{{ isItemScheduled(item) ? '再次加入' : '排入行程' }}
                   </button>
                 </div>
               </div>
@@ -798,9 +798,12 @@
           }
           sharedWith.push(uid);
           await tripRef.update({ sharedWith: sharedWith });
-          // 寄件人本地也立即標記共編
-          var sTrip = tripList.value.items.find(function(t){ return t.id === currentTripId.value; });
-          if (sTrip) sTrip.isShared = true;
+          // 寄件人本地也立即標記共編（splice 觸發 Vue 響應式）
+          var sIdx = tripList.value.items.findIndex(function(t){ return t.id === currentTripId.value; });
+          if (sIdx !== -1) {
+            var updated = Object.assign({}, tripList.value.items[sIdx], { isShared: true });
+            tripList.value.items.splice(sIdx, 1, updated);
+          }
           shareModal.value.message = '已送出邀請！對方登入後即可在「我的旅程」看到此行程'; shareModal.value.error = false;
           shareModal.value.email = '';
         } catch (e) {
@@ -1308,7 +1311,6 @@
       };
 
       const toggleBatchSelect = (item) => {
-        if (isItemScheduled(item)) return;
         const idx = selectedBatchItems.value.findIndex(function(i) { return i.id === item.id; });
         if (idx > -1) selectedBatchItems.value.splice(idx, 1);
         else selectedBatchItems.value.push(item);
