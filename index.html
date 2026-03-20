@@ -11,7 +11,7 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/gh/google/open-location-code@1.0.4/js/src/openlocationcode.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
-  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDgbDuGTj5x4cy4SFIQR4yHAtjN6z-dkn0&libraries=places,directions" async defer></script>
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDgbDuGTj5x4cy4SFIQR4yHAtjN6z-dkn0&libraries=places" async defer></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
@@ -92,8 +92,20 @@
             </div>
           </div>
           <div>
-            <label class="text-xs font-bold text-gray-400 mb-2 block">自訂匯率 (EUR:台幣)</label>
-            <input v-model.number="tripConfig.eurRate" type="number" step="0.01" class="w-full border border-gray-200 rounded-xl p-3 text-gray-700 outline-none text-right font-bold focus:border-[#4b8f7e] focus:ring-1 focus:ring-[#4b8f7e] transition" placeholder="例如: 34.5">
+            <div class="flex justify-between items-center mb-2">
+              <label class="text-xs font-bold text-gray-400">匯率設定</label>
+              <div v-if="tripConfig.localCurrency && tripConfig.localCurrency !== 'TWD'" class="flex items-center gap-1.5">
+                <span class="text-[10px] font-bold bg-teal-50 text-teal-600 px-2 py-0.5 rounded-full border border-teal-100">當地幣別：{{ tripConfig.localCurrency }}</span>
+                <button @click="fetchExchangeRate" :disabled="rateLoading" class="text-[10px] font-bold text-teal-600 hover:text-teal-800 bg-teal-50 px-2 py-0.5 rounded-full border border-teal-100 transition disabled:opacity-40">
+                  <i :class="rateLoading ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-rotate-right'" class="mr-1"></i>{{ rateLoading ? '查詢中' : '即時匯率' }}
+                </button>
+              </div>
+            </div>
+            <div class="relative">
+              <input v-model.number="tripConfig.eurRate" type="number" step="0.01" class="w-full border border-gray-200 rounded-xl p-3 text-gray-700 outline-none text-right font-bold focus:border-[#4b8f7e] focus:ring-1 focus:ring-[#4b8f7e] transition pr-20" :placeholder="tripConfig.localCurrency && tripConfig.localCurrency !== 'TWD' ? '1 ' + tripConfig.localCurrency + ' = ? TWD' : '例如: 34.5'">
+              <span v-if="tripConfig.localCurrency" class="absolute right-3 top-3.5 text-[11px] font-bold text-gray-400">{{ tripConfig.localCurrency }}/TWD</span>
+            </div>
+            <div v-if="rateMessage" class="text-[10px] mt-1 ml-1" :class="rateError ? 'text-red-400' : 'text-teal-500'">{{ rateMessage }}</div>
           </div>
         </div>
 
@@ -272,20 +284,14 @@
               
               <div v-if="index > 0" class="flex items-center my-1 ml-[1.6rem]">
                 <div class="w-0.5 h-8 bg-dashed border-l-2 border-dashed border-teal-200"></div>
-                <div class="ml-4 flex items-center text-[11px] font-bold text-gray-400 bg-white border border-gray-100 shadow-sm px-2.5 py-1 rounded-lg z-10 gap-1">
-                   <button @click.stop="setTransportMode(item, 'walking')" :class="item.transportMode === 'walking' ? 'bg-teal-500 text-white' : 'bg-gray-50 text-gray-400 hover:bg-teal-50 hover:text-[#4b8f7e]'" class="w-6 h-6 flex items-center justify-center rounded-full transition active:scale-95" title="步行">
-                      <i class="fa-solid fa-person-walking text-[10px]"></i>
+                <div class="ml-4 flex items-center text-[11px] font-bold text-gray-400 bg-white border border-gray-100 shadow-sm px-2.5 py-1 rounded-lg z-10">
+                   <button @click.stop="toggleTransport(item)" class="mr-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-gray-50 hover:bg-teal-50 hover:text-[#4b8f7e] transition active:scale-95 text-[#4b8f7e]">
+                      <i :class="item.transportMode === 'walking' ? 'fa-solid fa-person-walking' : 'fa-solid fa-car-side'"></i>
                    </button>
-                   <button @click.stop="setTransportMode(item, 'driving')" :class="item.transportMode === 'driving' ? 'bg-teal-500 text-white' : 'bg-gray-50 text-gray-400 hover:bg-teal-50 hover:text-[#4b8f7e]'" class="w-6 h-6 flex items-center justify-center rounded-full transition active:scale-95" title="開車">
-                      <i class="fa-solid fa-car-side text-[10px]"></i>
-                   </button>
-                   <button @click.stop="setTransportMode(item, 'transit')" :class="item.transportMode === 'transit' ? 'bg-teal-500 text-white' : 'bg-gray-50 text-gray-400 hover:bg-teal-50 hover:text-[#4b8f7e]'" class="w-6 h-6 flex items-center justify-center rounded-full transition active:scale-95" title="大眾運輸">
-                      <i class="fa-solid fa-train-subway text-[10px]"></i>
-                   </button>
-                   <span v-if="item.travelTime !== null" class="ml-1">
-                     {{ item.transportMode === 'walking' ? '步行' : item.transportMode === 'transit' ? '大眾運輸' : '車程' }}約 {{ item.travelTime }} 分鐘
+                   <span v-if="item.travelTime !== null">
+                     {{ item.transportMode === 'walking' ? '步行' : '車程' }}約 {{ item.travelTime }} 分鐘
                    </span>
-                   <span v-else class="text-gray-300 ml-1"><i class="fa-solid fa-spinner fa-spin mr-1"></i>估算中...</span>
+                   <span v-else class="text-gray-300"><i class="fa-solid fa-spinner fa-spin mr-1"></i>估算中...</span>
                 </div>
               </div>
 
@@ -580,7 +586,8 @@
             </select>
             <div class="flex w-2/3 bg-white rounded-xl overflow-hidden border border-white focus-within:border-[#4b8f7e] shadow-sm">
               <select v-model="newExpense.currency" class="p-3 bg-gray-50 border-none text-sm text-gray-700 outline-none font-bold">
-                <option value="EUR">EUR</option>
+                <option v-if="tripConfig.localCurrency && tripConfig.localCurrency !== 'TWD'" :value="tripConfig.localCurrency">{{ tripConfig.localCurrency }}</option>
+                <option v-else value="EUR">EUR</option>
                 <option value="TWD">TWD</option>
               </select>
               <input v-model.number="newExpense.amount" type="number" class="p-3 w-full border-none text-sm outline-none font-bold" placeholder="輸入金額">
@@ -611,8 +618,8 @@
           </div>
           
           <div class="text-[#4b8f7e] text-sm font-black mb-3">
-            總計：{{ showTwdSettlement ? 'NT$ ' + totalExpenseTwd : '€ ' + totalExpenseEur.toFixed(2) }}
-            <span v-if="showTwdSettlement" class="text-[9px] text-gray-400 font-bold ml-1">(匯率 {{ tripConfig.eurRate }})</span>
+            總計：{{ showTwdSettlement ? 'NT$ ' + totalExpenseTwd : (tripConfig.localCurrency || 'EUR') + ' ' + totalExpenseEur.toFixed(2) }}
+            <span v-if="showTwdSettlement" class="text-[9px] text-gray-400 font-bold ml-1">(匯率 {{ tripConfig.eurRate }} {{ tripConfig.localCurrency || 'EUR' }}/TWD)</span>
           </div>
 
           <ul class="space-y-3">
@@ -636,10 +643,10 @@
               </div>
               <div class="flex items-center space-x-3 text-right">
                 <div>
-                  <div class="text-sm font-black" :class="exp.currency === 'EUR' ? 'text-blue-500' : 'text-[#4b8f7e]'">
+                  <div class="text-sm font-black" :class="exp.currency !== 'TWD' ? 'text-blue-500' : 'text-[#4b8f7e]'">
                     {{ exp.originalAmount }} {{ exp.currency }}
                   </div>
-                  <div v-if="showTwdSettlement && exp.currency === 'EUR'" class="text-[9px] font-bold text-gray-400">NT$ {{ exp.twdAmount }}</div>
+                  <div v-if="showTwdSettlement && exp.currency !== 'TWD'" class="text-[9px] font-bold text-gray-400">NT$ {{ exp.twdAmount }}</div>
                 </div>
                 <button @click="deleteExpense(exp.id)" class="text-gray-200 hover:text-red-400 pl-2"><i class="fa-solid fa-circle-xmark text-lg"></i></button>
               </div>
@@ -766,19 +773,16 @@
       };
 
       const doSignOut = () => {
+        if (_saveDebounceTimer) { clearTimeout(_saveDebounceTimer); _saveDebounceTimer = null; }
         tripList.value.items = []; currentTripId.value = null;
-        tripConfig.value = { destination: '', startDate: today, days: 5, eurRate: 34.5 };
+        tripConfig.value = { destination: '', startDate: today, days: 5, eurRate: 34.5, localCurrency: 'EUR' };
         tripDays.value = []; itinerary.value = []; wishlist.value = []; expenses.value = [];
         membersInput.value = '旅伴1, 旅伴2'; members.value = [];
-        hasSavedConfig.value = false; appState.value = 'setup'; tripList.value.show = false;
+        hasSavedConfig.value = false; appState.value = 'main'; tripList.value.show = false;
         firebaseAuth.signOut();
       };
 
       const cancelSetup = () => {
-        // 取消建立新旅程，回到側欄
-        tripConfig.value = currentTripId.value
-          ? JSON.parse(localStorage.getItem(makeKey(currentTripId.value, 'config')) || '{}') || tripConfig.value
-          : tripConfig.value;
         appState.value = 'main';
         nextTick(function(){ tripList.value.show = true; });
       };
@@ -791,6 +795,7 @@
         const email = (shareModal.value.email || '').trim().toLowerCase();
         if (!email) { shareModal.value.message = '請輸入 Email'; shareModal.value.error = true; return; }
         try {
+          await saveTripToFirestore();
           const emailDoc = await firebaseDb.collection('userEmails').doc(email).get();
           if (!emailDoc.exists) {
             shareModal.value.message = '找不到此 Email 的帳號，請對方先註冊本 App'; shareModal.value.error = true; return;
@@ -835,6 +840,7 @@
         const items = [];
         owned.docs.forEach(function(d) {
           const dta = d.data();
+          if (dta.deletedAt) return;
           seen[d.id] = true;
           items.push({ id: d.id, destination: (dta.data && dta.data.config && dta.data.config.destination) || '', startDate: (dta.data && dta.data.config && dta.data.config.startDate) || '', days: (dta.data && dta.data.config && dta.data.config.days) || 5, ownerUid: dta.ownerUid });
         });
@@ -859,8 +865,8 @@
         if (!firebaseDb || !user.value || !currentTripId.value) return;
         const id = currentTripId.value;
         const tripRef = firebaseDb.collection('trips').doc(id);
-        const snap = await tripRef.get();
-        const payload = {
+        await tripRef.set({
+          ownerUid: user.value.uid,
           data: {
             config: tripConfig.value,
             days: tripDays.value,
@@ -870,14 +876,7 @@
             members: membersInput.value
           },
           updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        };
-        if (snap.exists) {
-          const d = snap.data();
-          if (d.ownerUid !== user.value.uid && (!d.sharedWith || d.sharedWith.indexOf(user.value.uid) === -1)) return;
-          await tripRef.update(payload);
-        } else {
-          await tripRef.set({ ownerUid: user.value.uid, sharedWith: [], ...payload });
-        }
+        }, { merge: true });
       };
 
       const loadTripFromFirestore = async (id) => {
@@ -887,7 +886,7 @@
         const d = snap.data();
         if (d.ownerUid !== user.value.uid && (!d.sharedWith || d.sharedWith.indexOf(user.value.uid) === -1)) return false;
         const data = d.data || {};
-        tripConfig.value = data.config || { destination: '', startDate: today, days: 5, eurRate: 34.5 };
+        tripConfig.value = data.config || { destination: '', startDate: today, days: 5, eurRate: 34.5, localCurrency: 'EUR' };
         tripDays.value = data.days || [];
         itinerary.value = (data.itinerary || []).slice();
         itinerary.value.forEach(function(item, index) { if (item.order === undefined) item.order = index; });
@@ -944,17 +943,134 @@
       const currentTripId = ref(null);
       const tripList = ref({ show: false, items: [] });
 
-      const tripConfig = ref({ destination: '', startDate: today, days: 5, eurRate: 34.5 });
+      const tripConfig = ref({ destination: '', startDate: today, days: 5, eurRate: 34.5, localCurrency: 'EUR' });
+      const rateLoading = ref(false);
+      const rateMessage = ref('');
+      const rateError = ref(false);
+
+      // 國家關鍵字 → 幣別對應表
+      const COUNTRY_CURRENCY = {
+        // 歐元區
+        'france|paris|lyon|nice|bordeaux|法國|巴黎': 'EUR',
+        'germany|berlin|munich|frankfurt|德國|柏林|慕尼黑': 'EUR',
+        'spain|madrid|barcelona|seville|西班牙|馬德里|巴塞隆納': 'EUR',
+        'italy|rome|milan|venice|florence|義大利|羅馬|米蘭|威尼斯': 'EUR',
+        'netherlands|amsterdam|荷蘭|阿姆斯特丹': 'EUR',
+        'portugal|lisbon|porto|葡萄牙|里斯本': 'EUR',
+        'greece|athens|希臘|雅典': 'EUR',
+        'austria|vienna|奧地利|維也納': 'EUR',
+        'belgium|brussels|比利時|布魯塞爾': 'EUR',
+        'switzerland|zurich|geneva|瑞士|蘇黎世|日內瓦': 'CHF',
+        // 英國
+        'uk|united kingdom|england|london|britain|英國|倫敦|英格蘭': 'GBP',
+        // 日本
+        'japan|tokyo|osaka|kyoto|日本|東京|大阪|京都': 'JPY',
+        // 韓國
+        'korea|seoul|busan|韓國|南韓|首爾|釜山': 'KRW',
+        // 美國
+        'usa|united states|america|new york|los angeles|美國|紐約|洛杉磯': 'USD',
+        // 澳洲
+        'australia|sydney|melbourne|澳洲|澳大利亞|雪梨|墨爾本': 'AUD',
+        // 加拿大
+        'canada|toronto|vancouver|加拿大|多倫多|溫哥華': 'CAD',
+        // 泰國
+        'thailand|bangkok|泰國|曼谷': 'THB',
+        // 新加坡
+        'singapore|新加坡': 'SGD',
+        // 香港
+        'hong kong|香港': 'HKD',
+        // 中國
+        'china|beijing|shanghai|中國|北京|上海': 'CNY',
+        // 土耳其
+        'turkey|istanbul|土耳其|伊斯坦堡': 'TRY',
+        // 捷克
+        'czech|prague|捷克|布拉格': 'CZK',
+        // 挪威
+        'norway|oslo|挪威|奧斯陸': 'NOK',
+        // 瑞典
+        'sweden|stockholm|瑞典|斯德哥爾摩': 'SEK',
+        // 丹麥
+        'denmark|copenhagen|丹麥|哥本哈根': 'DKK',
+        // 匈牙利
+        'hungary|budapest|匈牙利|布達佩斯': 'HUF',
+        // 波蘭
+        'poland|warsaw|波蘭|華沙': 'PLN',
+        // 以色列
+        'israel|tel aviv|以色列|特拉維夫': 'ILS',
+        // 紐西蘭
+        'new zealand|nz|紐西蘭|奧克蘭': 'NZD',
+        // 墨西哥
+        'mexico|墨西哥': 'MXN',
+        // 印度
+        'india|delhi|mumbai|印度|新德里|孟買': 'INR',
+        // 印尼
+        'indonesia|bali|jakarta|印尼|峇里島|雅加達': 'IDR',
+        // 越南
+        'vietnam|hanoi|ho chi minh|越南|河內|胡志明': 'VND',
+        // 馬來西亞
+        'malaysia|kuala lumpur|馬來西亞|吉隆坡': 'MYR',
+        // 菲律賓
+        'philippines|manila|菲律賓|馬尼拉': 'PHP',
+        // 台灣
+        'taiwan|taipei|台灣|台北': 'TWD',
+      };
+
+      const detectCurrency = (destination) => {
+        if (!destination) return 'EUR';
+        const lower = destination.toLowerCase();
+        for (const pattern in COUNTRY_CURRENCY) {
+          const keywords = pattern.split('|');
+          if (keywords.some(function(kw) { return lower.indexOf(kw) !== -1; })) {
+            return COUNTRY_CURRENCY[pattern];
+          }
+        }
+        return 'EUR';
+      };
+
+      const fetchExchangeRate = async () => {
+        const currency = tripConfig.value.localCurrency;
+        if (!currency || currency === 'TWD') return;
+        rateLoading.value = true; rateMessage.value = ''; rateError.value = false;
+        try {
+          // 使用免費的 frankfurter.app API（不需要 key）
+          const res = await fetch('https://api.frankfurter.app/latest?from=' + currency + '&to=TWD');
+          const data = await res.json();
+          if (data.rates && data.rates.TWD) {
+            tripConfig.value.eurRate = Math.round(data.rates.TWD * 100) / 100;
+            rateMessage.value = '已更新：1 ' + currency + ' ≈ ' + tripConfig.value.eurRate + ' TWD（' + data.date + '）';
+            rateError.value = false;
+          } else {
+            rateMessage.value = '查無匯率，請手動輸入'; rateError.value = true;
+          }
+        } catch(e) {
+          rateMessage.value = '無法取得即時匯率，請手動輸入'; rateError.value = true;
+        } finally { rateLoading.value = false; }
+      };
+
+      // 監聽目的地變更，自動偵測幣別並抓取即時匯率
+      watch(() => tripConfig.value.destination, async function(newDest) {
+        if (!newDest || !newDest.trim()) return;
+        const detected = detectCurrency(newDest);
+        if (detected !== tripConfig.value.localCurrency) {
+          tripConfig.value.localCurrency = detected;
+          // 自動抓取即時匯率
+          if (detected !== 'TWD') await fetchExchangeRate();
+          else { tripConfig.value.eurRate = 1; rateMessage.value = '目的地使用台幣，無需換算'; rateError.value = false; }
+        }
+      });
       const tripDays = ref([]);
       const activeTab = ref('itinerary');
       const activeDay = ref(1);
 
       const makeKey = (id, suffix) => 'travelTrip_' + id + '_' + suffix;
 
+      let _loadingTripData = false;
       const loadTripData = async (id) => {
+        _loadingTripData = true;
         currentTripId.value = id;
         if (firebaseEnabled.value && user.value && firebaseDb) {
           const ok = await loadTripFromFirestore(id);
+          _loadingTripData = false;
           if (ok) return;
         }
         try {
@@ -964,7 +1080,7 @@
           const wl = localStorage.getItem(makeKey(id, 'wishlist'));
           const ex = localStorage.getItem(makeKey(id, 'expenses'));
           const mem = localStorage.getItem(makeKey(id, 'members'));
-          tripConfig.value = cfg ? JSON.parse(cfg) : { destination: '', startDate: today, days: 5, eurRate: 34.5 };
+          tripConfig.value = cfg ? JSON.parse(cfg) : { destination: '', startDate: today, days: 5, eurRate: 34.5, localCurrency: 'EUR' };
           tripDays.value = days ? JSON.parse(days) : [];
           itinerary.value = it ? JSON.parse(it) : [];
           itinerary.value.forEach(function(item, index) { if (item.order === undefined) item.order = index; });
@@ -974,11 +1090,18 @@
           membersInput.value = mem || '旅伴1, 旅伴2';
           members.value = membersInput.value.split(',').map(function(m) { return m.trim(); }).filter(function(m) { return m; });
         } catch (e) {}
+        _loadingTripData = false;
       };
 
+      let _saveDebounceTimer = null;
       const saveCurrentTripData = () => {
         if (!currentTripId.value) return;
-        if (firebaseEnabled.value && user.value && firebaseDb) { saveTripToFirestore(); return; }
+        if (_loadingTripData) return;
+        if (firebaseEnabled.value && user.value && firebaseDb) {
+          if (_saveDebounceTimer) clearTimeout(_saveDebounceTimer);
+          _saveDebounceTimer = setTimeout(saveTripToFirestore, 1500);
+          return;
+        }
         const id = currentTripId.value;
         localStorage.setItem(makeKey(id, 'config'), JSON.stringify(tripConfig.value));
         localStorage.setItem(makeKey(id, 'days'), JSON.stringify(tripDays.value));
@@ -1005,7 +1128,9 @@
       const membersInput = ref('旅伴1, 旅伴2');
       const members = ref([]);
       const expenses = ref([]);
-      const newExpense = ref({ payer: '', amount: null, currency: 'EUR', note: '', involved: [] });
+      const newExpense = ref({ payer: '', amount: null, currency: tripConfig.value.localCurrency || 'EUR', note: '', involved: [] });
+      // 目的地幣別變更時更新預設幣別
+      watch(() => tripConfig.value.localCurrency, function(cur) { if (cur) newExpense.value.currency = cur; });
       const showTwdSettlement = ref(false);
 
       // Firebase 啟用：等 onAuthStateChanged，不讀 localStorage
@@ -1090,19 +1215,27 @@
       };
 
       const switchTrip = async (id) => {
-        saveCurrentTripData();
+        if (currentTripId.value && currentTripId.value !== id) saveCurrentTripData();
         await loadTripData(id);
         tripList.value.show = false;
         appState.value = 'main';
       };
 
       const deleteTrip = async (id) => {
-        if (!confirm('確定要刪除這個旅程嗎？資料將無法復原。')) return;
+        if (!confirm('確定要刪除這個旅程嗎？')) return;
         if (firebaseEnabled.value && user.value && firebaseDb) {
-          const snap = await firebaseDb.collection('trips').doc(id).get();
-          if (snap.exists && snap.data().ownerUid === user.value.uid) {
-            await firebaseDb.collection('trips').doc(id).delete();
-          }
+          try {
+            const snap = await firebaseDb.collection('trips').doc(id).get();
+            if (snap.exists) {
+              const d = snap.data();
+              if (d.ownerUid === user.value.uid) {
+                await firebaseDb.collection('trips').doc(id).update({ deletedAt: firebase.firestore.FieldValue.serverTimestamp(), deletedBy: user.value.uid });
+              } else if (d.sharedWith && d.sharedWith.indexOf(user.value.uid) !== -1) {
+                const newShared = d.sharedWith.filter(function(u) { return u !== user.value.uid; });
+                await firebaseDb.collection('trips').doc(id).update({ sharedWith: newShared });
+              }
+            }
+          } catch(e) {}
         }
         ['config', 'days', 'itinerary', 'wishlist', 'expenses', 'members'].forEach(function(s) { localStorage.removeItem(makeKey(id, s)); });
         tripList.value.items = tripList.value.items.filter(function(t) { return t.id !== id; });
@@ -1154,6 +1287,52 @@
         } catch (e) {} finally { itemRef.weatherLoading = false; }
       };
 
+      // ── Google Places Autocomplete 共用函式 ──
+      // 回傳格式與原 Nominatim 相同，方便直接替換
+      const searchByGooglePlaces = (query, callback) => {
+        if (!query || !query.trim()) { callback([]); return; }
+        if (typeof google === 'undefined' || !google.maps || !google.maps.places) {
+          // Google 未載入時 fallback Nominatim
+          fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(query) + '&limit=5&addressdetails=1&accept-language=zh-TW,en')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+              callback(data.map(function(item) {
+                const addr = item.address || {};
+                return { id: item.place_id, name: item.name || item.display_name.split(',')[0], address: item.display_name, city: addr.city || addr.town || addr.village || addr.county || '未知地區', lat: parseFloat(item.lat), lng: parseFloat(item.lon), autoTag: autoDetectTag(item.class, item.type) };
+              }));
+            }).catch(function() { callback([]); });
+          return;
+        }
+        const svc = new google.maps.places.AutocompleteService();
+        svc.getPlacePredictions({ input: query, language: 'zh-TW' }, function(predictions, status) {
+          if (status !== google.maps.places.PlacesServiceStatus.OK || !predictions) { callback([]); return; }
+          const detailSvc = new google.maps.places.PlacesService(document.createElement('div'));
+          const results = [];
+          let pending = predictions.slice(0, 5).length;
+          if (pending === 0) { callback([]); return; }
+          predictions.slice(0, 5).forEach(function(pred) {
+            detailSvc.getDetails({ placeId: pred.place_id, fields: ['name', 'geometry', 'formatted_address', 'address_components', 'types'] }, function(place, st) {
+              if (st === google.maps.places.PlacesServiceStatus.OK && place && place.geometry) {
+                const comps = place.address_components || [];
+                const cityComp = comps.find(function(a) { return a.types.indexOf('locality') !== -1 || a.types.indexOf('administrative_area_level_1') !== -1; });
+                const city = cityComp ? cityComp.long_name : '未知地區';
+                const types = place.types || [];
+                let autoTag = 'landmark';
+                if (types.some(function(t) { return ['restaurant','cafe','food','bar'].indexOf(t) !== -1; })) autoTag = 'restaurant';
+                else if (types.some(function(t) { return ['museum','art_gallery'].indexOf(t) !== -1; })) autoTag = 'museum';
+                else if (types.some(function(t) { return ['park','natural_feature','campground'].indexOf(t) !== -1; })) autoTag = 'nature';
+                else if (types.some(function(t) { return ['shopping_mall','store','clothing_store'].indexOf(t) !== -1; })) autoTag = 'shopping';
+                else if (types.some(function(t) { return ['lodging'].indexOf(t) !== -1; })) autoTag = 'accommodation';
+                else if (types.some(function(t) { return ['transit_station','bus_station','train_station','subway_station','airport'].indexOf(t) !== -1; })) autoTag = 'transport';
+                results.push({ id: pred.place_id, name: place.name, address: place.formatted_address || pred.description, city: city, lat: place.geometry.location.lat(), lng: place.geometry.location.lng(), autoTag: autoTag });
+              }
+              pending--;
+              if (pending === 0) callback(results);
+            });
+          });
+        });
+      };
+
       const handleSearchWishlist = (e) => {
         newWishlistPlace.value.place = e.target.value;
         newWishlistPlace.value.lat = null; newWishlistPlace.value.lng = null; newWishlistPlace.value.city = '';
@@ -1191,23 +1370,11 @@
             }
           }
 
-          try {
-            const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(e.target.value) + '&limit=5&addressdetails=1&accept-language=zh-TW,en');
-            const data = await res.json();
-            placeSuggestions.value = data.map(function(item) {
-              const addr = item.address || {};
-              const city = addr.city || addr.town || addr.village || addr.county || addr.state || '未知地區';
-              let itemName = item.name;
-              if (!itemName && item.display_name) itemName = item.display_name.split(',')[0];
-              return {
-                id: item.place_id, name: itemName,
-                address: item.display_name, city: city, lat: parseFloat(item.lat), lng: parseFloat(item.lon),
-                autoTag: autoDetectTag(item.class, item.type)
-              };
-            });
-          } catch (error) {} 
-          finally { isSearchingPlace.value = false; }
-        }, 500);
+          searchByGooglePlaces(e.target.value, function(results) {
+            placeSuggestions.value = results;
+            isSearchingPlace.value = false;
+          });
+        }, 300);
       };
 
       const selectWishlistPlace = (place) => {
@@ -1261,23 +1428,11 @@
             }
           }
 
-          try {
-            const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(e.target.value) + '&limit=5&addressdetails=1&accept-language=zh-TW,en');
-            const data = await res.json();
-            linkSuggestions.value = data.map(function(item) {
-              const addr = item.address || {};
-              const city = addr.city || addr.town || addr.village || addr.county || addr.state || '未知地區';
-              let itemName = item.name;
-              if (!itemName && item.display_name) itemName = item.display_name.split(',')[0];
-              return {
-                id: item.place_id, name: itemName,
-                address: item.display_name, city: city, lat: parseFloat(item.lat), lng: parseFloat(item.lon),
-                autoTag: autoDetectTag(item.class, item.type)
-              };
-            });
-          } catch (error) {} 
-          finally { isLinkingSearch.value = false; }
-        }, 500);
+          searchByGooglePlaces(e.target.value, function(results) {
+            linkSuggestions.value = results;
+            isLinkingSearch.value = false;
+          });
+        }, 300);
       };
 
       const confirmLinkMap = async (item, place) => {
@@ -1454,103 +1609,31 @@
         return result;
       });
 
-      // Google Maps DirectionsService（JS SDK，不是 REST API，不會有 CORS 問題）
-      // departureTimeStr：'HH:MM' 格式，用行程日期 + 出發時間組成真實 Date 物件
-      const getGoogleTravelTime = (origin, destination, mode, departureTimeStr) => {
-        return new Promise(function(resolve) {
-          if (typeof google === 'undefined' || !google.maps || !google.maps.DirectionsService) {
-            resolve(null); return;
-          }
-          const svc = new google.maps.DirectionsService();
-          const modeMap = { walking: google.maps.TravelMode.WALKING, driving: google.maps.TravelMode.DRIVING, transit: google.maps.TravelMode.TRANSIT };
-
-          // 計算出發時間：用行程開始日期 + 目前天數 + 前一站結束時間
-          let departureTime = new Date();
-          if (departureTimeStr) {
-            try {
-              const parts = departureTimeStr.split(':');
-              const tripStart = tripConfig.value.startDate; // 'YYYY-MM-DD'
-              const dayIdx = (activeDay.value - 1);
-              const baseDate = new Date(tripStart);
-              baseDate.setDate(baseDate.getDate() + dayIdx);
-              baseDate.setHours(parseInt(parts[0]), parseInt(parts[1]), 0, 0);
-              if (baseDate > new Date()) departureTime = baseDate; // 只用未來時間，過去的用現在
-            } catch(e) {}
-          }
-
-          const req = {
-            origin: new google.maps.LatLng(origin.lat, origin.lng),
-            destination: new google.maps.LatLng(destination.lat, destination.lng),
-            travelMode: modeMap[mode] || google.maps.TravelMode.DRIVING
-          };
-          // 大眾運輸才加 departureTime（步行/開車不需要）
-          if (mode === 'transit') req.transitOptions = { departureTime: departureTime };
-
-          svc.route(req, function(result, status) {
-            if (status === 'OK' && result.routes[0] && result.routes[0].legs[0]) {
-              resolve(Math.ceil(result.routes[0].legs[0].duration.value / 60));
-            } else { resolve(null); }
-          });
-        });
-      };
-
       const updateRouteTimes = async () => {
         const list = sortedItinerary.value; if (list.length <= 1) return; let hasUpdates = false;
-        // 逐站計算累計時間，用來當大眾運輸的出發時間
-        let runningTime = list[0].time || '09:00';
         for (let i = 1; i < list.length; i++) {
-          const prev = list[i-1];
-          const curr = itinerary.value.find(function(item) { return item.id === list[i].id; });
-          if (!curr.transportMode) curr.transportMode = 'driving';
-          // 前一站結束時間 = 累計時間 + 停留時間
-          const prevEndTime = addMinutes(runningTime, parseInt(prev.stayDuration) || 0);
+          const prev = list[i-1]; const curr = itinerary.value.find(function(item) { return item.id === list[i].id; }); 
+          if (!curr.transportMode) curr.transportMode = 'driving'; 
           const routeKey = prev.lat + ',' + prev.lng + '-' + curr.lat + ',' + curr.lng + '-' + curr.transportMode;
-          if (!curr.lat || !curr.lng || !prev.lat || !prev.lng) {
-            if (curr.travelTime !== null) { curr.travelTime = null; hasUpdates = true; }
-            runningTime = addMinutes(runningTime, (parseInt(prev.stayDuration) || 0) + (curr.travelTime || 0));
-            continue;
-          }
+          if (!curr.lat || !curr.lng || !prev.lat || !prev.lng) { if(curr.travelTime !== null) { curr.travelTime = null; hasUpdates = true; } continue; }
           if (curr.routeKey !== routeKey) {
             try {
-              // 先嘗試 Google Maps，傳入前一站結束時間當出發時間
-              let travelMins = await getGoogleTravelTime(
-                { lat: prev.lat, lng: prev.lng }, { lat: curr.lat, lng: curr.lng }, curr.transportMode,
-                prevEndTime  // ← 前一站結束時間
-              );
-              // Google 失敗時 fallback OSRM（步行/開車）
-              if (travelMins === null) {
-                const profile = curr.transportMode === 'walking' ? 'foot' : 'driving';
-                const res = await fetch('https://router.project-osrm.org/route/v1/' + profile + '/' + prev.lng + ',' + prev.lat + ';' + curr.lng + ',' + curr.lat + '?overview=false');
-                const data = await res.json();
-                if (data.routes && data.routes[0]) {
-                  const raw = data.routes[0].duration / 60;
-                  travelMins = curr.transportMode === 'walking' ? Math.ceil(raw * 1.1 + 2) : Math.ceil(raw * 1.3 + 5);
-                } else { travelMins = 0; }
-              }
-              curr.travelTime = travelMins;
+              const profile = curr.transportMode === 'walking' ? 'foot' : 'driving';
+              const res = await fetch('https://router.project-osrm.org/route/v1/' + profile + '/' + prev.lng + ',' + prev.lat + ';' + curr.lng + ',' + curr.lat + '?overview=false');
+              const data = await res.json();
+              if(data.routes && data.routes.length > 0) {
+                let rawMins = data.routes[0].duration / 60; curr.travelTime = curr.transportMode === 'walking' ? Math.ceil(rawMins * 1.1 + 2) : Math.ceil(rawMins * 1.3 + 5);
+              } else { curr.travelTime = 0; }
               curr.routeKey = routeKey; hasUpdates = true;
             } catch(e) { curr.travelTime = 0; curr.routeKey = routeKey; hasUpdates = true; }
           }
-          // 更新累計時間給下一站使用
-          runningTime = addMinutes(runningTime, (parseInt(prev.stayDuration) || 0) + (curr.travelTime || 0));
         }
         if (hasUpdates && currentTripId.value) saveCurrentTripData();
       };
 
       const toggleTransport = async (item) => {
         const targetItem = itinerary.value.find(function(i) { return i.id === item.id; });
-        if (targetItem) {
-          const modes = ['driving', 'walking', 'transit'];
-          const idx = modes.indexOf(targetItem.transportMode);
-          targetItem.transportMode = modes[(idx + 1) % modes.length];
-          targetItem.routeKey = ''; await updateRouteTimes();
-        }
-      };
-      const setTransportMode = async (item, mode) => {
-        const targetItem = itinerary.value.find(function(i) { return i.id === item.id; });
-        if (targetItem && targetItem.transportMode !== mode) {
-          targetItem.transportMode = mode; targetItem.routeKey = ''; await updateRouteTimes();
-        }
+        if(targetItem) { targetItem.transportMode = targetItem.transportMode === 'walking' ? 'driving' : 'walking'; targetItem.routeKey = ''; await updateRouteTimes(); }
       };
 
       const editItinerary = (item) => { editingId.value = item.id; editForm.value = { time: item.time || '', stayDuration: item.stayDuration, place: item.place, tag: item.tag || 'landmark' }; };
@@ -1614,7 +1697,7 @@
           newExpense.value.involved = members.value.slice();
       };
 
-      const convertToTWD = (amount, currency) => { return currency === 'TWD' ? amount : Math.round(amount * tripConfig.value.eurRate); };
+      const convertToTWD = (amount, currency) => { return currency === 'TWD' ? amount : Math.round(amount * (tripConfig.value.eurRate || 34.5)); };
       
       const addExpense = () => {
         if (!newExpense.value.payer || !newExpense.value.amount || !newExpense.value.note) return alert('請填寫完整資訊！');
@@ -1950,13 +2033,13 @@
       });
 
       return {
-        appState, hasSavedConfig, tripConfig, tripDateRange, startPlanning, cancelSetup, activeTab, tripDays, activeDay, currentDayName,
+        appState, hasSavedConfig, tripConfig, tripDateRange, startPlanning, cancelSetup, rateLoading, rateMessage, rateError, fetchExchangeRate, activeTab, tripDays, activeDay, currentDayName,
         currentTripId, tripList, tripListRefreshing, refreshTripList, createNewTrip, switchTrip, deleteTrip,
         firebaseEnabled, user, authLoading, authEmail, authPassword, authMode, authError, authLoadingBtn, authNickname, doAuth, doSignOut,
         shareModal, openShareModal, inviteByEmail,
         availableTags, getTagInfo,
         itinerary, showAddItinerary, newItinerary, sortedItinerary, timelineItinerary, deleteItinerary,
-        editingId, editForm, editItinerary, saveItinerary, toggleTransport, setTransportMode, isItemScheduled,
+        editingId, editForm, editItinerary, saveItinerary, toggleTransport, isItemScheduled,
         itineraryListRef,
         wishlist, newWishlistPlace, handleSearchWishlist, addToWishlist, deleteWishlist, selectWishlistPlace,
         wishlistSortMode, processedWishlist, editingWishlistId, wishlistEditName, wishlistEditTag, editWishlistName, saveWishlistName,
