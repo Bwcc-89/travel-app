@@ -377,7 +377,7 @@
               <div class="text-[10px] font-bold text-indigo-400">從昨晚住宿出發</div>
               <div class="text-sm font-bold text-indigo-700 truncate">{{ prevDayAccommodation.place }}</div>
             </div>
-            <a v-if="prevDayAccommodation.lat" :href="'https://www.google.com/maps/search/?api=1&query=' + prevDayAccommodation.lat + ',' + prevDayAccommodation.lng" target="_blank" class="text-blue-400 text-xs ml-2 flex-shrink-0"><i class="fa-brands fa-google"></i></a>
+            <a v-if="prevDayAccommodation.lat" :href="prevDayAccommodation.placeId ? 'https://www.google.com/maps/place/?q=place_id:' + prevDayAccommodation.placeId : 'https://www.google.com/maps/search/?api=1&query=' + prevDayAccommodation.lat + ',' + prevDayAccommodation.lng" target="_blank" class="text-blue-400 text-xs ml-2 flex-shrink-0"><i class="fa-brands fa-google"></i></a>
           </div>
 
           <div v-if="timelineItinerary.length > 0" ref="itineraryListRef" class="space-y-0 mt-2 pb-4">
@@ -434,7 +434,7 @@
                     </div>
 
                     <div class="mt-4 flex justify-end items-center space-x-4 border-t border-gray-50 pt-3 pl-7">
-                      <a v-if="item.lat && item.lng" :href="'https://www.google.com/maps/search/?api=1&query=' + item.lat + ',' + item.lng" target="_blank" @click.stop class="text-blue-400 hover:text-blue-600 transition flex items-center mr-auto">
+                      <a v-if="item.lat && item.lng" :href="item.placeId ? 'https://www.google.com/maps/place/?q=place_id:' + item.placeId : 'https://www.google.com/maps/search/?api=1&query=' + item.lat + ',' + item.lng" target="_blank" @click.stop class="text-blue-400 hover:text-blue-600 transition flex items-center mr-auto">
                         <i class="fa-brands fa-google text-xs mr-1"></i><span class="text-[10px] font-bold">地圖</span>
                       </a>
                       <span v-else class="text-[10px] font-bold text-gray-300 mr-auto"><i class="fa-solid fa-pen-nib mr-1"></i>無座標資訊</span>
@@ -497,7 +497,7 @@
                 </div>
               </div>
               <div class="flex items-center gap-2 flex-shrink-0 ml-3">
-                <a v-if="currentDayAccommodation.lat" :href="'https://www.google.com/maps/search/?api=1&query=' + currentDayAccommodation.lat + ',' + currentDayAccommodation.lng" target="_blank" class="text-blue-400 hover:text-blue-600 text-sm"><i class="fa-brands fa-google"></i></a>
+                <a v-if="currentDayAccommodation.lat" :href="currentDayAccommodation.placeId ? 'https://www.google.com/maps/place/?q=place_id:' + currentDayAccommodation.placeId : 'https://www.google.com/maps/search/?api=1&query=' + currentDayAccommodation.lat + ',' + currentDayAccommodation.lng" target="_blank" class="text-blue-400 hover:text-blue-600 text-sm"><i class="fa-brands fa-google"></i></a>
                 <button @click="openAccommodationModal(activeDay)" class="text-indigo-400 hover:text-indigo-600 text-sm"><i class="fa-solid fa-pen"></i></button>
                 <button @click="removeAccommodation(activeDay)" class="text-gray-300 hover:text-red-400 text-sm"><i class="fa-solid fa-xmark"></i></button>
               </div>
@@ -657,7 +657,7 @@
                 </div>
 
                 <div v-if="!isBatchMode" class="flex justify-between items-center border-t border-gray-50 pt-3 mt-2">
-                  <a v-if="item.lat && item.lng" :href="'https://www.google.com/maps/search/?api=1&query=' + item.lat + ',' + item.lng" target="_blank" @click.stop class="text-blue-400 hover:text-blue-600 transition flex items-center bg-blue-50 px-3 py-1.5 rounded-lg">
+                  <a v-if="item.lat && item.lng" :href="item.placeId ? 'https://www.google.com/maps/place/?q=place_id:' + item.placeId : 'https://www.google.com/maps/search/?api=1&query=' + item.lat + ',' + item.lng" target="_blank" @click.stop class="text-blue-400 hover:text-blue-600 transition flex items-center bg-blue-50 px-3 py-1.5 rounded-lg">
                     <i class="fa-brands fa-google text-xs mr-1.5"></i><span class="text-[10px] font-bold">看地圖</span>
                   </a>
                   
@@ -1248,7 +1248,7 @@
 
       const itinerary = ref([]);
       const wishlist = ref([]);
-      const newWishlistPlace = ref({ place: '', lat: null, lng: null, city: '', tag: 'landmark' });
+      const newWishlistPlace = ref({ place: '', lat: null, lng: null, city: '', tag: 'landmark', placeId: null });
       const wishlistSortMode = ref('default');
       const editingWishlistId = ref(null);
       const wishlistEditName = ref('');
@@ -1287,11 +1287,11 @@
           searchByGooglePlaces(q, function(results) { accomSuggestions.value = results; accomSearching.value = false; });
         }, 300);
       };
-      const selectAccomPlace = (place) => { accommodationModal.value.place = place.name; accommodationModal.value.lat = place.lat; accommodationModal.value.lng = place.lng; accommodationModal.value.city = place.city; accomSuggestions.value = []; };
+      const selectAccomPlace = (place) => { accommodationModal.value.place = place.name; accommodationModal.value.lat = place.lat; accommodationModal.value.lng = place.lng; accommodationModal.value.city = place.city; accommodationModal.value.placeId = place.placeId || null; accomSuggestions.value = []; };
       const saveAccommodation = () => {
         if (!accommodationModal.value.place.trim()) return alert('請輸入住宿名稱！');
         const dayId = accommodationModal.value.dayId;
-        accommodations.value = Object.assign({}, accommodations.value, { [dayId]: { place: accommodationModal.value.place.trim(), lat: accommodationModal.value.lat, lng: accommodationModal.value.lng, city: accommodationModal.value.city } });
+        accommodations.value = Object.assign({}, accommodations.value, { [dayId]: { place: accommodationModal.value.place.trim(), lat: accommodationModal.value.lat, lng: accommodationModal.value.lng, city: accommodationModal.value.city, placeId: accommodationModal.value.placeId || null } });
         accommodationModal.value.show = false; accomSuggestions.value = []; saveCurrentTripData();
       };
       const removeAccommodation = (dayId) => { const newAcc = Object.assign({}, accommodations.value); delete newAcc[dayId]; accommodations.value = newAcc; saveCurrentTripData(); };
@@ -1306,13 +1306,13 @@
           searchByGooglePlaces(q, function(results) { directAddSuggestions.value = results; directAddSearching.value = false; });
         }, 300);
       };
-      const selectDirectAddPlace = (place) => { newItinerary.value.place = place.name; newItinerary.value.lat = place.lat; newItinerary.value.lng = place.lng; newItinerary.value.city = place.city; newItinerary.value.tag = place.autoTag || newItinerary.value.tag; directAddSuggestions.value = []; };
+      const selectDirectAddPlace = (place) => { newItinerary.value.place = place.name; newItinerary.value.lat = place.lat; newItinerary.value.lng = place.lng; newItinerary.value.city = place.city; newItinerary.value.tag = place.autoTag || newItinerary.value.tag; newItinerary.value.placeId = place.placeId || null; directAddSuggestions.value = []; };
       const addItineraryDirect = async () => {
         if (!newItinerary.value.place || !newItinerary.value.place.trim()) return alert('請輸入景點名稱！');
         const currentDayArr = itinerary.value.filter(function(i) { return i.dayId === activeDay.value; });
         const baseOrder = currentDayArr.length > 0 ? Math.max.apply(null, currentDayArr.map(function(i) { return i.order || 0; })) + 1 : 0;
         const firstTime = currentDayArr.length === 0 ? (newItinerary.value.time || '09:00') : '';
-        itinerary.value.push({ id: Date.now(), dayId: activeDay.value, time: firstTime, stayDuration: newItinerary.value.stayDuration || 120, place: newItinerary.value.place.trim(), lat: newItinerary.value.lat || null, lng: newItinerary.value.lng || null, city: newItinerary.value.city || '自訂景點', tag: newItinerary.value.tag || 'landmark', weather: null, weatherLoading: false, isEditing: false, travelTime: null, routeKey: '', transportMode: 'driving', order: baseOrder });
+        itinerary.value.push({ id: Date.now(), dayId: activeDay.value, time: firstTime, stayDuration: newItinerary.value.stayDuration || 120, place: newItinerary.value.place.trim(), lat: newItinerary.value.lat || null, lng: newItinerary.value.lng || null, city: newItinerary.value.city || '自訂景點', tag: newItinerary.value.tag || 'landmark', placeId: newItinerary.value.placeId || null, weather: null, weatherLoading: false, isEditing: false, travelTime: null, routeKey: '', transportMode: 'driving', order: baseOrder });
         newItinerary.value = { time: '', stayDuration: 120, place: '', lat: null, lng: null, city: '', tag: 'landmark' };
         directAddSuggestions.value = []; showAddItinerary.value = false;
         await updateRouteTimes(); nextTick(initSortable); if (activeTab.value === 'map') renderMapMarkers();
@@ -1518,7 +1518,7 @@
                 else if (types.some(function(t) { return ['shopping_mall','store','clothing_store'].indexOf(t) !== -1; })) autoTag = 'shopping';
                 else if (types.some(function(t) { return ['lodging'].indexOf(t) !== -1; })) autoTag = 'accommodation';
                 else if (types.some(function(t) { return ['transit_station','bus_station','train_station','subway_station','airport'].indexOf(t) !== -1; })) autoTag = 'transport';
-                results.push({ id: pred.place_id, name: place.name, address: place.formatted_address || pred.description, city: city, lat: place.geometry.location.lat(), lng: place.geometry.location.lng(), autoTag: autoTag });
+                results.push({ id: pred.place_id, placeId: pred.place_id, name: place.name, address: place.formatted_address || pred.description, city: city, lat: place.geometry.location.lat(), lng: place.geometry.location.lng(), autoTag: autoTag });
               }
               pending--;
               if (pending === 0) callback(results);
@@ -1574,8 +1574,9 @@
       const selectWishlistPlace = (place) => {
         if (place.lat === null) return; 
         newWishlistPlace.value.place = place.name;
-        newWishlistPlace.value.lat = place.lat; newWishlistPlace.value.lng = place.lng; newWishlistPlace.value.city = place.city;
-        newWishlistPlace.value.tag = place.autoTag; 
+        newWishlistPlace.value.lat = place.lat; newWishlistPlace.value.lng = place.lng;
+        newWishlistPlace.value.city = place.city; newWishlistPlace.value.tag = place.autoTag;
+        newWishlistPlace.value.placeId = place.placeId || null;
         placeSuggestions.value = []; 
       };
 
@@ -1635,6 +1636,7 @@
         const target = wishlist.value.find(function(w) { return w.id === item.id; });
         if (target) {
           target.lat = place.lat; target.lng = place.lng; target.city = place.city;
+          target.placeId = place.placeId || null;
           if (target.tag === 'landmark' && place.autoTag) target.tag = place.autoTag;
           target.weatherLoading = true;
           try {
@@ -1725,11 +1727,12 @@
 
         const newItem = {
           id: Date.now(), place: newWishlistPlace.value.place, lat: newWishlistPlace.value.lat, lng: newWishlistPlace.value.lng,
-          city: newWishlistPlace.value.city || '自訂地區', tag: newWishlistPlace.value.tag || 'landmark', weather: null, weatherLoading: false
+          city: newWishlistPlace.value.city || '自訂地區', tag: newWishlistPlace.value.tag || 'landmark',
+          placeId: newWishlistPlace.value.placeId || null, weather: null, weatherLoading: false
         };
         wishlist.value.unshift(newItem); 
         newWishlistPlace.value.place = ''; newWishlistPlace.value.lat = null; newWishlistPlace.value.lng = null; newWishlistPlace.value.city = '';
-        newWishlistPlace.value.tag = 'landmark'; placeSuggestions.value = [];
+        newWishlistPlace.value.tag = 'landmark'; newWishlistPlace.value.placeId = null; placeSuggestions.value = [];
         
         await fetchGeoAndWeather(wishlist.value[0].place, wishlist.value[0]);
         if(activeTab.value === 'map') renderMapMarkers();
@@ -1762,8 +1765,8 @@
                 itinerary.value.push({
                     id: Date.now() + Math.random(), dayId: scheduleModal.value.dayId, time: isTargetDayEmpty.value && baseOrder === 0 ? scheduleModal.value.time : '',
                     stayDuration: scheduleModal.value.stayDuration, place: targetItem.place, lat: targetItem.lat, lng: targetItem.lng,
-                    city: targetItem.city || '未知地區', tag: targetItem.tag || 'landmark', weather: targetItem.weather, weatherLoading: false, 
-                    isEditing: false, travelTime: null, routeKey: '', transportMode: 'driving', order: baseOrder++
+                    city: targetItem.city || '未知地區', tag: targetItem.tag || 'landmark', weather: targetItem.weather, weatherLoading: false,
+                    placeId: targetItem.placeId || null, isEditing: false, travelTime: null, routeKey: '', transportMode: 'driving', order: baseOrder++
                 });
             });
             isBatchMode.value = false; selectedBatchItems.value = [];
@@ -1772,8 +1775,8 @@
             itinerary.value.push({
                 id: Date.now(), dayId: scheduleModal.value.dayId, time: isTargetDayEmpty.value ? scheduleModal.value.time : '',
                 stayDuration: scheduleModal.value.stayDuration, place: targetItem.place, lat: targetItem.lat, lng: targetItem.lng,
-                city: targetItem.city || '未知地區', tag: targetItem.tag || 'landmark', weather: targetItem.weather, weatherLoading: false, 
-                isEditing: false, travelTime: null, routeKey: '', transportMode: 'driving', order: baseOrder
+                city: targetItem.city || '未知地區', tag: targetItem.tag || 'landmark', weather: targetItem.weather, weatherLoading: false,
+                placeId: targetItem.placeId || null, isEditing: false, travelTime: null, routeKey: '', transportMode: 'driving', order: baseOrder
             });
         }
         scheduleModal.value.show = false; activeDay.value = scheduleModal.value.dayId; activeTab.value = 'itinerary';
