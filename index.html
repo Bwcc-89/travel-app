@@ -828,6 +828,7 @@
         const items = [];
         owned.docs.forEach(function(d) {
           const dta = d.data();
+          if (dta.deletedAt) return; // 已軟刪除，跳過
           seen[d.id] = true;
           items.push({ id: d.id, destination: (dta.data && dta.data.config && dta.data.config.destination) || '', startDate: (dta.data && dta.data.config && dta.data.config.startDate) || '', days: (dta.data && dta.data.config && dta.data.config.days) || 5, ownerUid: dta.ownerUid });
         });
@@ -866,6 +867,7 @@
         };
         if (snap.exists) {
           const d = snap.data();
+          if (d.deletedAt) return; // 已軟刪除，拒絕寫入
           if (d.ownerUid !== user.value.uid && (!d.sharedWith || d.sharedWith.indexOf(user.value.uid) === -1)) return;
           await tripRef.update(payload);
         } else {
@@ -944,10 +946,13 @@
 
       const makeKey = (id, suffix) => 'travelTrip_' + id + '_' + suffix;
 
+      let _loadingTripData = false; // 載入行程資料期間暫停 watch 回存
       const loadTripData = async (id) => {
+        _loadingTripData = true;
         currentTripId.value = id;
         if (firebaseEnabled.value && user.value && firebaseDb) {
           const ok = await loadTripFromFirestore(id);
+          _loadingTripData = false;
           if (ok) return;
         }
         try {
@@ -967,10 +972,12 @@
           membersInput.value = mem || '旅伴1, 旅伴2';
           members.value = membersInput.value.split(',').map(function(m) { return m.trim(); }).filter(function(m) { return m; });
         } catch (e) {}
+        _loadingTripData = false;
       };
 
       const saveCurrentTripData = () => {
         if (!currentTripId.value) return;
+        if (_loadingTripData) return; // 正在載入資料，不要回存
         if (firebaseEnabled.value && user.value && firebaseDb) { saveTripToFirestore(); return; }
         const id = currentTripId.value;
         localStorage.setItem(makeKey(id, 'config'), JSON.stringify(tripConfig.value));
@@ -1083,18 +1090,30 @@
       };
 
       const switchTrip = async (id) => {
-        saveCurrentTripData();
+        // 先存當前行程，確認 currentTripId 正確後才切換
+        if (currentTripId.value && currentTripId.value !== id) saveCurrentTripData();
         await loadTripData(id);
         tripList.value.show = false;
         appState.value = 'main';
       };
 
       const deleteTrip = async (id) => {
-        if (!confirm('確定要刪除這個旅程嗎？資料將無法復原。')) return;
+        if (!confirm('確定要刪除這個旅程嗎？')) return;
         if (firebaseEnabled.value && user.value && firebaseDb) {
           const snap = await firebaseDb.collection('trips').doc(id).get();
-          if (snap.exists && snap.data().ownerUid === user.value.uid) {
-            await firebaseDb.collection('trips').doc(id).delete();
+          if (snap.exists) {
+            const d = snap.data();
+            if (d.ownerUid === user.value.uid) {
+              // 軟刪除：只標記 deletedAt，保留資料 30 天
+              await firebaseDb.collection('trips').doc(id).update({
+                deletedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                deletedBy: user.value.uid
+              });
+            } else if (d.sharedWith && d.sharedWith.indexOf(user.value.uid) !== -1) {
+              // 共編者：只從 sharedWith 移除自己，不刪除行程
+              const newShared = d.sharedWith.filter(function(u) { return u !== user.value.uid; });
+              await firebaseDb.collection('trips').doc(id).update({ sharedWith: newShared });
+            }
           }
         }
         ['config', 'days', 'itinerary', 'wishlist', 'expenses', 'members'].forEach(function(s) { localStorage.removeItem(makeKey(id, s)); });
