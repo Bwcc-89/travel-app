@@ -716,9 +716,7 @@
             </select>
             <div class="flex w-2/3 bg-white rounded-xl overflow-hidden border border-white focus-within:border-[#4b8f7e] shadow-sm">
               <select v-model="newExpense.currency" class="p-3 bg-gray-50 border-none text-sm text-gray-700 outline-none font-bold">
-                <option v-if="tripConfig.localCurrency && tripConfig.localCurrency !== 'TWD'" :value="tripConfig.localCurrency">{{ tripConfig.localCurrency }}</option>
-                <option v-else value="EUR">EUR</option>
-                <option value="TWD">TWD</option>
+                <option v-for="cur in tripCurrencies" :key="cur" :value="cur">{{ cur }}</option>
               </select>
               <input v-model.number="newExpense.amount" type="number" class="p-3 w-full border-none text-sm outline-none font-bold" placeholder="輸入金額">
             </div>
@@ -1164,12 +1162,27 @@
         if (!currency || currency === 'TWD') return;
         rateLoading.value = true; rateMessage.value = ''; rateError.value = false;
         try {
-          // 使用免費的 frankfurter.app API（不需要 key）
-          const res = await fetch('https://api.frankfurter.app/latest?from=' + currency + '&to=TWD');
-          const data = await res.json();
-          if (data.rates && data.rates.TWD) {
-            tripConfig.value.eurRate = Math.round(data.rates.TWD * 100) / 100;
-            rateMessage.value = '已更新：1 ' + currency + ' ≈ ' + tripConfig.value.eurRate + ' TWD（' + data.date + '）';
+          // 先試 ExchangeRate-API（支援 TWD，免費不需 key）
+          let rate = null; let dateStr = '';
+          try {
+            const res = await fetch('https://open.er-api.com/v6/latest/' + currency);
+            const data = await res.json();
+            if (data.result === 'success' && data.rates && data.rates.TWD) {
+              rate = data.rates.TWD;
+              dateStr = data.time_last_update_utc ? new Date(data.time_last_update_utc).toLocaleDateString('zh-TW') : '';
+            }
+          } catch(e) {}
+          // fallback: frankfurter（不支援部分幣別）
+          if (!rate) {
+            try {
+              const res2 = await fetch('https://api.frankfurter.app/latest?from=' + currency + '&to=TWD');
+              const data2 = await res2.json();
+              if (data2.rates && data2.rates.TWD) { rate = data2.rates.TWD; dateStr = data2.date; }
+            } catch(e) {}
+          }
+          if (rate) {
+            tripConfig.value.eurRate = Math.round(rate * 100) / 100;
+            rateMessage.value = '已更新：1 ' + currency + ' ≈ ' + tripConfig.value.eurRate + ' TWD' + (dateStr ? '（' + dateStr + '）' : '');
             rateError.value = false;
           } else {
             rateMessage.value = '查無匯率，請手動輸入'; rateError.value = true;
@@ -1178,6 +1191,30 @@
           rateMessage.value = '無法取得即時匯率，請手動輸入'; rateError.value = true;
         } finally { rateLoading.value = false; }
       };
+
+      // 從景點庫的城市/目的地推算出所有涉及的幣別
+      const tripCurrencies = computed(() => {
+        const set = new Set();
+        // 主幣別一定加
+        if (tripConfig.value.localCurrency && tripConfig.value.localCurrency !== 'TWD') {
+          set.add(tripConfig.value.localCurrency);
+        }
+        // 掃描景點庫的城市名稱也偵測一遍
+        wishlist.value.forEach(function(item) {
+          if (item.city) {
+            const detected = detectCurrency(item.city);
+            if (detected && detected !== 'TWD') set.add(detected);
+          }
+          if (item.place) {
+            const detected = detectCurrency(item.place);
+            if (detected && detected !== 'TWD') set.add(detected);
+          }
+        });
+        // 至少要有主幣別（預設 EUR）
+        if (set.size === 0) set.add('EUR');
+        set.add('TWD');
+        return Array.from(set);
+      });
 
       // 監聽目的地變更，自動偵測幣別並抓取即時匯率
       watch(() => tripConfig.value.destination, async function(newDest) {
@@ -1309,11 +1346,18 @@
       const selectDirectAddPlace = (place) => { newItinerary.value.place = place.name; newItinerary.value.lat = place.lat; newItinerary.value.lng = place.lng; newItinerary.value.city = place.city; newItinerary.value.tag = place.autoTag || newItinerary.value.tag; newItinerary.value.placeId = place.placeId || null; directAddSuggestions.value = []; };
       const addItineraryDirect = async () => {
         if (!newItinerary.value.place || !newItinerary.value.place.trim()) return alert('請輸入景點名稱！');
+        const placeName = newItinerary.value.place.trim();
         const currentDayArr = itinerary.value.filter(function(i) { return i.dayId === activeDay.value; });
         const baseOrder = currentDayArr.length > 0 ? Math.max.apply(null, currentDayArr.map(function(i) { return i.order || 0; })) + 1 : 0;
         const firstTime = currentDayArr.length === 0 ? (newItinerary.value.time || '09:00') : '';
-        itinerary.value.push({ id: Date.now(), dayId: activeDay.value, time: firstTime, stayDuration: newItinerary.value.stayDuration || 120, place: newItinerary.value.place.trim(), lat: newItinerary.value.lat || null, lng: newItinerary.value.lng || null, city: newItinerary.value.city || '自訂景點', tag: newItinerary.value.tag || 'landmark', placeId: newItinerary.value.placeId || null, weather: null, weatherLoading: false, isEditing: false, travelTime: null, routeKey: '', transportMode: 'driving', order: baseOrder });
-        newItinerary.value = { time: '', stayDuration: 120, place: '', lat: null, lng: null, city: '', tag: 'landmark' };
+        // 加入行程
+        itinerary.value.push({ id: Date.now(), dayId: activeDay.value, time: firstTime, stayDuration: newItinerary.value.stayDuration || 120, place: placeName, lat: newItinerary.value.lat || null, lng: newItinerary.value.lng || null, city: newItinerary.value.city || '自訂景點', tag: newItinerary.value.tag || 'landmark', placeId: newItinerary.value.placeId || null, weather: null, weatherLoading: false, isEditing: false, travelTime: null, routeKey: '', transportMode: 'driving', order: baseOrder });
+        // 同步加入景點庫（若不存在）
+        const alreadyInWishlist = wishlist.value.some(function(w) { return w.place === placeName || (w.lat && w.lat === newItinerary.value.lat && w.lng === newItinerary.value.lng); });
+        if (!alreadyInWishlist) {
+          wishlist.value.unshift({ id: Date.now() + 1, place: placeName, lat: newItinerary.value.lat || null, lng: newItinerary.value.lng || null, city: newItinerary.value.city || '自訂景點', tag: newItinerary.value.tag || 'landmark', placeId: newItinerary.value.placeId || null, weather: null, weatherLoading: false });
+        }
+        newItinerary.value = { time: '', stayDuration: 120, place: '', lat: null, lng: null, city: '', tag: 'landmark', placeId: null };
         directAddSuggestions.value = []; showAddItinerary.value = false;
         await updateRouteTimes(); nextTick(initSortable); if (activeTab.value === 'map') renderMapMarkers();
       };
@@ -1323,6 +1367,23 @@
       const members = ref([]);
       const expenses = ref([]);
       const newExpense = ref({ payer: '', amount: null, currency: tripConfig.value.localCurrency || 'EUR', note: '', involved: [] });
+      // 各幣別對 TWD 的匯率快取（主幣別用 eurRate，其他幣別加入時動態查詢）
+      const currencyRates = ref({});
+      // 取得某幣別對 TWD 匯率
+      const getRateToTWD = async (currency) => {
+        if (currency === 'TWD') return 1;
+        if (currency === tripConfig.value.localCurrency) return tripConfig.value.eurRate || 1;
+        if (currencyRates.value[currency]) return currencyRates.value[currency];
+        try {
+          const res = await fetch('https://open.er-api.com/v6/latest/' + currency);
+          const data = await res.json();
+          if (data.result === 'success' && data.rates && data.rates.TWD) {
+            currencyRates.value[currency] = Math.round(data.rates.TWD * 100) / 100;
+            return currencyRates.value[currency];
+          }
+        } catch(e) {}
+        return tripConfig.value.eurRate || 1; // fallback
+      };
       // 目的地幣別變更時更新預設幣別
       watch(() => tripConfig.value.localCurrency, function(cur) { if (cur) newExpense.value.currency = cur; });
       const showTwdSettlement = ref(false);
@@ -1935,18 +1996,20 @@
 
       const convertToTWD = (amount, currency) => { return currency === 'TWD' ? amount : Math.round(amount * (tripConfig.value.eurRate || 34.5)); };
       
-      const addExpense = () => {
+      const addExpense = async () => {
         if (!newExpense.value.payer || !newExpense.value.amount || !newExpense.value.note) return alert('請填寫完整資訊！');
         if (newExpense.value.involved.length === 0) return alert('請至少選擇一位參與分帳的人！');
-
+        const rate = await getRateToTWD(newExpense.value.currency);
+        const twdAmt = newExpense.value.currency === 'TWD' ? newExpense.value.amount : Math.round(newExpense.value.amount * rate);
         expenses.value.push({ 
           id: Date.now(), 
           payer: newExpense.value.payer, 
           originalAmount: newExpense.value.amount, 
-          currency: newExpense.value.currency, 
-          twdAmount: convertToTWD(newExpense.value.amount, newExpense.value.currency), 
+          currency: newExpense.value.currency,
+          rateToTWD: rate,
+          twdAmount: twdAmt,
           note: newExpense.value.note,
-          involved: newExpense.value.involved.slice() // 儲存勾選項
+          involved: newExpense.value.involved.slice()
         });
         newExpense.value.amount = null; 
         newExpense.value.note = '';
@@ -1973,18 +2036,15 @@
 
       const settlements = computed(() => {
         if (members.value.length === 0 || expenses.value.length === 0) return [];
-        let rate = tripConfig.value.eurRate || 34.5;
         let results = [];
 
         if (showTwdSettlement.value) {
-            // ======================================
-            // 模式 1: 全部轉為台幣大結算
-            // ======================================
             let balances = {}; 
             members.value.forEach(function(m) { balances[m] = 0; });
             
             expenses.value.forEach(function(exp) {
-               let amountTwd = exp.currency === 'TWD' ? exp.originalAmount : exp.originalAmount * rate;
+               // 優先用記帳時的 twdAmount（已含當時匯率）
+               let amountTwd = exp.twdAmount || (exp.currency === 'TWD' ? exp.originalAmount : exp.originalAmount * (exp.rateToTWD || tripConfig.value.eurRate || 34.5));
                
                if(balances[exp.payer] !== undefined) {
                     balances[exp.payer] += amountTwd;
@@ -2282,7 +2342,7 @@
         isBatchMode, selectedBatchItems, toggleBatchMode, toggleBatchSelect, isBatchSelected, openBatchScheduleModal,
         linkingMapId, linkSearchQuery, linkSuggestions, isLinkingSearch, startLinkMap, cancelLinkMap, handleLinkSearch, confirmLinkMap,
         accommodations, accommodationModal, currentDayAccommodation, prevDayAccommodation, openAccommodationModal, saveAccommodation, removeAccommodation, handleAccomSearch, selectAccomPlace, accomSuggestions, accomSearching, setTransportMode, scheduleModal, isTargetDayEmpty, openScheduleModal, confirmSchedule,
-        placeSuggestions, isSearchingPlace, membersInput, members, expenses, newExpense, updateMembers, addExpense, deleteExpense,
+        placeSuggestions, isSearchingPlace, membersInput, members, expenses, newExpense, updateMembers, addExpense, deleteExpense, tripCurrencies,
         totalExpenseTwd, totalExpenseEur, showTwdSettlement, settlements, locateUser,
         mapDayFilter
       };
