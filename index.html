@@ -11,6 +11,7 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/gh/google/open-location-code@1.0.4/js/src/openlocationcode.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDgbDuGTj5x4cy4SFIQR4yHAtjN6z-dkn0&libraries=places,directions" async defer></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
@@ -271,14 +272,20 @@
               
               <div v-if="index > 0" class="flex items-center my-1 ml-[1.6rem]">
                 <div class="w-0.5 h-8 bg-dashed border-l-2 border-dashed border-teal-200"></div>
-                <div class="ml-4 flex items-center text-[11px] font-bold text-gray-400 bg-white border border-gray-100 shadow-sm px-2.5 py-1 rounded-lg z-10">
-                   <button @click.stop="toggleTransport(item)" class="mr-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-gray-50 hover:bg-teal-50 hover:text-[#4b8f7e] transition active:scale-95 text-[#4b8f7e]">
-                      <i :class="item.transportMode === 'walking' ? 'fa-solid fa-person-walking' : 'fa-solid fa-car-side'"></i>
+                <div class="ml-4 flex items-center text-[11px] font-bold text-gray-400 bg-white border border-gray-100 shadow-sm px-2.5 py-1 rounded-lg z-10 gap-1">
+                   <button @click.stop="setTransportMode(item, 'walking')" :class="item.transportMode === 'walking' ? 'bg-teal-500 text-white' : 'bg-gray-50 text-gray-400 hover:bg-teal-50 hover:text-[#4b8f7e]'" class="w-6 h-6 flex items-center justify-center rounded-full transition active:scale-95" title="步行">
+                      <i class="fa-solid fa-person-walking text-[10px]"></i>
                    </button>
-                   <span v-if="item.travelTime !== null">
-                     {{ item.transportMode === 'walking' ? '步行' : '車程' }}約 {{ item.travelTime }} 分鐘
+                   <button @click.stop="setTransportMode(item, 'driving')" :class="item.transportMode === 'driving' ? 'bg-teal-500 text-white' : 'bg-gray-50 text-gray-400 hover:bg-teal-50 hover:text-[#4b8f7e]'" class="w-6 h-6 flex items-center justify-center rounded-full transition active:scale-95" title="開車">
+                      <i class="fa-solid fa-car-side text-[10px]"></i>
+                   </button>
+                   <button @click.stop="setTransportMode(item, 'transit')" :class="item.transportMode === 'transit' ? 'bg-teal-500 text-white' : 'bg-gray-50 text-gray-400 hover:bg-teal-50 hover:text-[#4b8f7e]'" class="w-6 h-6 flex items-center justify-center rounded-full transition active:scale-95" title="大眾運輸">
+                      <i class="fa-solid fa-train-subway text-[10px]"></i>
+                   </button>
+                   <span v-if="item.travelTime !== null" class="ml-1">
+                     {{ item.transportMode === 'walking' ? '步行' : item.transportMode === 'transit' ? '大眾運輸' : '車程' }}約 {{ item.travelTime }} 分鐘
                    </span>
-                   <span v-else class="text-gray-300"><i class="fa-solid fa-spinner fa-spin mr-1"></i>估算中...</span>
+                   <span v-else class="text-gray-300 ml-1"><i class="fa-solid fa-spinner fa-spin mr-1"></i>估算中...</span>
                 </div>
               </div>
 
@@ -828,7 +835,6 @@
         const items = [];
         owned.docs.forEach(function(d) {
           const dta = d.data();
-          if (dta.deletedAt) return; // 已軟刪除，跳過
           seen[d.id] = true;
           items.push({ id: d.id, destination: (dta.data && dta.data.config && dta.data.config.destination) || '', startDate: (dta.data && dta.data.config && dta.data.config.startDate) || '', days: (dta.data && dta.data.config && dta.data.config.days) || 5, ownerUid: dta.ownerUid });
         });
@@ -867,7 +873,6 @@
         };
         if (snap.exists) {
           const d = snap.data();
-          if (d.deletedAt) return; // 已軟刪除，拒絕寫入
           if (d.ownerUid !== user.value.uid && (!d.sharedWith || d.sharedWith.indexOf(user.value.uid) === -1)) return;
           await tripRef.update(payload);
         } else {
@@ -946,13 +951,10 @@
 
       const makeKey = (id, suffix) => 'travelTrip_' + id + '_' + suffix;
 
-      let _loadingTripData = false; // 載入行程資料期間暫停 watch 回存
       const loadTripData = async (id) => {
-        _loadingTripData = true;
         currentTripId.value = id;
         if (firebaseEnabled.value && user.value && firebaseDb) {
           const ok = await loadTripFromFirestore(id);
-          _loadingTripData = false;
           if (ok) return;
         }
         try {
@@ -972,12 +974,10 @@
           membersInput.value = mem || '旅伴1, 旅伴2';
           members.value = membersInput.value.split(',').map(function(m) { return m.trim(); }).filter(function(m) { return m; });
         } catch (e) {}
-        _loadingTripData = false;
       };
 
       const saveCurrentTripData = () => {
         if (!currentTripId.value) return;
-        if (_loadingTripData) return; // 正在載入資料，不要回存
         if (firebaseEnabled.value && user.value && firebaseDb) { saveTripToFirestore(); return; }
         const id = currentTripId.value;
         localStorage.setItem(makeKey(id, 'config'), JSON.stringify(tripConfig.value));
@@ -1090,30 +1090,18 @@
       };
 
       const switchTrip = async (id) => {
-        // 先存當前行程，確認 currentTripId 正確後才切換
-        if (currentTripId.value && currentTripId.value !== id) saveCurrentTripData();
+        saveCurrentTripData();
         await loadTripData(id);
         tripList.value.show = false;
         appState.value = 'main';
       };
 
       const deleteTrip = async (id) => {
-        if (!confirm('確定要刪除這個旅程嗎？')) return;
+        if (!confirm('確定要刪除這個旅程嗎？資料將無法復原。')) return;
         if (firebaseEnabled.value && user.value && firebaseDb) {
           const snap = await firebaseDb.collection('trips').doc(id).get();
-          if (snap.exists) {
-            const d = snap.data();
-            if (d.ownerUid === user.value.uid) {
-              // 軟刪除：只標記 deletedAt，保留資料 30 天
-              await firebaseDb.collection('trips').doc(id).update({
-                deletedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                deletedBy: user.value.uid
-              });
-            } else if (d.sharedWith && d.sharedWith.indexOf(user.value.uid) !== -1) {
-              // 共編者：只從 sharedWith 移除自己，不刪除行程
-              const newShared = d.sharedWith.filter(function(u) { return u !== user.value.uid; });
-              await firebaseDb.collection('trips').doc(id).update({ sharedWith: newShared });
-            }
+          if (snap.exists && snap.data().ownerUid === user.value.uid) {
+            await firebaseDb.collection('trips').doc(id).delete();
           }
         }
         ['config', 'days', 'itinerary', 'wishlist', 'expenses', 'members'].forEach(function(s) { localStorage.removeItem(makeKey(id, s)); });
@@ -1466,31 +1454,103 @@
         return result;
       });
 
+      // Google Maps DirectionsService（JS SDK，不是 REST API，不會有 CORS 問題）
+      // departureTimeStr：'HH:MM' 格式，用行程日期 + 出發時間組成真實 Date 物件
+      const getGoogleTravelTime = (origin, destination, mode, departureTimeStr) => {
+        return new Promise(function(resolve) {
+          if (typeof google === 'undefined' || !google.maps || !google.maps.DirectionsService) {
+            resolve(null); return;
+          }
+          const svc = new google.maps.DirectionsService();
+          const modeMap = { walking: google.maps.TravelMode.WALKING, driving: google.maps.TravelMode.DRIVING, transit: google.maps.TravelMode.TRANSIT };
+
+          // 計算出發時間：用行程開始日期 + 目前天數 + 前一站結束時間
+          let departureTime = new Date();
+          if (departureTimeStr) {
+            try {
+              const parts = departureTimeStr.split(':');
+              const tripStart = tripConfig.value.startDate; // 'YYYY-MM-DD'
+              const dayIdx = (activeDay.value - 1);
+              const baseDate = new Date(tripStart);
+              baseDate.setDate(baseDate.getDate() + dayIdx);
+              baseDate.setHours(parseInt(parts[0]), parseInt(parts[1]), 0, 0);
+              if (baseDate > new Date()) departureTime = baseDate; // 只用未來時間，過去的用現在
+            } catch(e) {}
+          }
+
+          const req = {
+            origin: new google.maps.LatLng(origin.lat, origin.lng),
+            destination: new google.maps.LatLng(destination.lat, destination.lng),
+            travelMode: modeMap[mode] || google.maps.TravelMode.DRIVING
+          };
+          // 大眾運輸才加 departureTime（步行/開車不需要）
+          if (mode === 'transit') req.transitOptions = { departureTime: departureTime };
+
+          svc.route(req, function(result, status) {
+            if (status === 'OK' && result.routes[0] && result.routes[0].legs[0]) {
+              resolve(Math.ceil(result.routes[0].legs[0].duration.value / 60));
+            } else { resolve(null); }
+          });
+        });
+      };
+
       const updateRouteTimes = async () => {
         const list = sortedItinerary.value; if (list.length <= 1) return; let hasUpdates = false;
+        // 逐站計算累計時間，用來當大眾運輸的出發時間
+        let runningTime = list[0].time || '09:00';
         for (let i = 1; i < list.length; i++) {
-          const prev = list[i-1]; const curr = itinerary.value.find(function(item) { return item.id === list[i].id; }); 
-          if (!curr.transportMode) curr.transportMode = 'driving'; 
+          const prev = list[i-1];
+          const curr = itinerary.value.find(function(item) { return item.id === list[i].id; });
+          if (!curr.transportMode) curr.transportMode = 'driving';
+          // 前一站結束時間 = 累計時間 + 停留時間
+          const prevEndTime = addMinutes(runningTime, parseInt(prev.stayDuration) || 0);
           const routeKey = prev.lat + ',' + prev.lng + '-' + curr.lat + ',' + curr.lng + '-' + curr.transportMode;
-          if (!curr.lat || !curr.lng || !prev.lat || !prev.lng) { if(curr.travelTime !== null) { curr.travelTime = null; hasUpdates = true; } continue; }
+          if (!curr.lat || !curr.lng || !prev.lat || !prev.lng) {
+            if (curr.travelTime !== null) { curr.travelTime = null; hasUpdates = true; }
+            runningTime = addMinutes(runningTime, (parseInt(prev.stayDuration) || 0) + (curr.travelTime || 0));
+            continue;
+          }
           if (curr.routeKey !== routeKey) {
             try {
-              const profile = curr.transportMode === 'walking' ? 'foot' : 'driving';
-              const res = await fetch('https://router.project-osrm.org/route/v1/' + profile + '/' + prev.lng + ',' + prev.lat + ';' + curr.lng + ',' + curr.lat + '?overview=false');
-              const data = await res.json();
-              if(data.routes && data.routes.length > 0) {
-                let rawMins = data.routes[0].duration / 60; curr.travelTime = curr.transportMode === 'walking' ? Math.ceil(rawMins * 1.1 + 2) : Math.ceil(rawMins * 1.3 + 5);
-              } else { curr.travelTime = 0; }
+              // 先嘗試 Google Maps，傳入前一站結束時間當出發時間
+              let travelMins = await getGoogleTravelTime(
+                { lat: prev.lat, lng: prev.lng }, { lat: curr.lat, lng: curr.lng }, curr.transportMode,
+                prevEndTime  // ← 前一站結束時間
+              );
+              // Google 失敗時 fallback OSRM（步行/開車）
+              if (travelMins === null) {
+                const profile = curr.transportMode === 'walking' ? 'foot' : 'driving';
+                const res = await fetch('https://router.project-osrm.org/route/v1/' + profile + '/' + prev.lng + ',' + prev.lat + ';' + curr.lng + ',' + curr.lat + '?overview=false');
+                const data = await res.json();
+                if (data.routes && data.routes[0]) {
+                  const raw = data.routes[0].duration / 60;
+                  travelMins = curr.transportMode === 'walking' ? Math.ceil(raw * 1.1 + 2) : Math.ceil(raw * 1.3 + 5);
+                } else { travelMins = 0; }
+              }
+              curr.travelTime = travelMins;
               curr.routeKey = routeKey; hasUpdates = true;
             } catch(e) { curr.travelTime = 0; curr.routeKey = routeKey; hasUpdates = true; }
           }
+          // 更新累計時間給下一站使用
+          runningTime = addMinutes(runningTime, (parseInt(prev.stayDuration) || 0) + (curr.travelTime || 0));
         }
         if (hasUpdates && currentTripId.value) saveCurrentTripData();
       };
 
       const toggleTransport = async (item) => {
         const targetItem = itinerary.value.find(function(i) { return i.id === item.id; });
-        if(targetItem) { targetItem.transportMode = targetItem.transportMode === 'walking' ? 'driving' : 'walking'; targetItem.routeKey = ''; await updateRouteTimes(); }
+        if (targetItem) {
+          const modes = ['driving', 'walking', 'transit'];
+          const idx = modes.indexOf(targetItem.transportMode);
+          targetItem.transportMode = modes[(idx + 1) % modes.length];
+          targetItem.routeKey = ''; await updateRouteTimes();
+        }
+      };
+      const setTransportMode = async (item, mode) => {
+        const targetItem = itinerary.value.find(function(i) { return i.id === item.id; });
+        if (targetItem && targetItem.transportMode !== mode) {
+          targetItem.transportMode = mode; targetItem.routeKey = ''; await updateRouteTimes();
+        }
       };
 
       const editItinerary = (item) => { editingId.value = item.id; editForm.value = { time: item.time || '', stayDuration: item.stayDuration, place: item.place, tag: item.tag || 'landmark' }; };
@@ -1896,7 +1956,7 @@
         shareModal, openShareModal, inviteByEmail,
         availableTags, getTagInfo,
         itinerary, showAddItinerary, newItinerary, sortedItinerary, timelineItinerary, deleteItinerary,
-        editingId, editForm, editItinerary, saveItinerary, toggleTransport, isItemScheduled,
+        editingId, editForm, editItinerary, saveItinerary, toggleTransport, setTransportMode, isItemScheduled,
         itineraryListRef,
         wishlist, newWishlistPlace, handleSearchWishlist, addToWishlist, deleteWishlist, selectWishlistPlace,
         wishlistSortMode, processedWishlist, editingWishlistId, wishlistEditName, wishlistEditTag, editWishlistName, saveWishlistName,
