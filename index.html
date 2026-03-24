@@ -307,20 +307,23 @@
           </div>
         </div>
 
-        <div class="p-5 space-y-4">
-          <div class="sticky top-0 z-10 bg-[#fafbfc] -mx-5 px-5 pt-3 pb-2 mb-2 shadow-sm">
-            <div class="flex justify-between items-center">
-              <h2 class="text-sm font-bold text-gray-500 tracking-widest">{{ currentDayName }} 行程</h2>
-              <div class="flex items-center gap-2">
-                <button @click="showAddItinerary = !showAddItinerary; newItinerary.place = ''; newItinerary.lat = null; directAddSuggestions = []" class="text-[#4b8f7e] text-xs flex items-center bg-teal-50 px-3 py-1.5 rounded-full hover:bg-teal-100 transition font-bold shadow-sm border border-teal-100">
-                  <i class="fa-solid fa-plus mr-1.5"></i>直接新增
-                </button>
-                <button @click="activeTab = 'wishlist'" class="text-[#4b8f7e] text-xs flex items-center bg-teal-50 px-3 py-1.5 rounded-full hover:bg-teal-100 transition font-bold shadow-sm border border-teal-100">
-                  <i class="fa-solid fa-heart mr-1.5"></i>景點庫
-                </button>
-              </div>
+        <!-- 凍結按鈕列：在 p-5 容器外，直接 sticky -->
+        <div class="sticky top-0 z-10 bg-[#fafbfc] px-5 pt-3 pb-2 border-b border-gray-100 shadow-sm">
+          <div class="flex justify-between items-center">
+            <h2 class="text-sm font-bold text-gray-500 tracking-widest">{{ currentDayName }} 行程</h2>
+            <div class="flex items-center gap-2">
+              <button @click="showAddItinerary = !showAddItinerary; newItinerary.place = ''; newItinerary.lat = null; directAddSuggestions = []" class="text-[#4b8f7e] text-xs flex items-center bg-teal-50 px-3 py-1.5 rounded-full hover:bg-teal-100 transition font-bold shadow-sm border border-teal-100">
+                <i class="fa-solid fa-plus mr-1.5"></i>直接新增
+              </button>
+              <button @click="activeTab = 'wishlist'" class="text-[#4b8f7e] text-xs flex items-center bg-teal-50 px-3 py-1.5 rounded-full hover:bg-teal-100 transition font-bold shadow-sm border border-teal-100">
+                <i class="fa-solid fa-heart mr-1.5"></i>景點庫
+              </button>
             </div>
           </div>
+        </div>
+
+        <div class="p-5 space-y-4">
+          <div>
 
           <!-- 直接新增景點表單 -->
           <transition name="modal">
@@ -1346,7 +1349,7 @@
         const accomAlreadyInItinerary = dayItems.some(function(i) { return i.isAccommodation && i.accommodationDayId === dayId; });
         if (!accomAlreadyInItinerary) {
           const maxOrder = dayItems.length > 0 ? Math.max.apply(null, dayItems.map(function(i) { return i.order || 0; })) + 1 : 0;
-          itinerary.value.push({ id: Date.now() + 3, dayId: dayId, time: '', stayDuration: 480, place: accomData.place, lat: accomData.lat || null, lng: accomData.lng || null, city: accomData.city || '住宿', tag: 'accommodation', placeId: accomData.placeId || null, isAccommodation: true, accommodationDayId: dayId, weather: null, weatherLoading: false, isEditing: false, travelTime: null, routeKey: '', transportMode: 'driving', order: maxOrder });
+          itinerary.value.push({ id: Date.now() + 3, dayId: dayId, time: '', stayDuration: 0, place: accomData.place, lat: accomData.lat || null, lng: accomData.lng || null, city: accomData.city || '住宿', tag: 'accommodation', placeId: accomData.placeId || null, isAccommodation: true, accommodationDayId: dayId, weather: null, weatherLoading: false, isEditing: false, travelTime: null, routeKey: '', transportMode: 'driving', order: maxOrder });
         } else {
           // 更新已存在的住宿站點
           const existing = itinerary.value.find(function(i) { return i.dayId === dayId && i.isAccommodation && i.accommodationDayId === dayId; });
@@ -1368,7 +1371,8 @@
         }
 
         accommodationModal.value.show = false; accomSuggestions.value = [];
-        updateRouteTimes(); saveCurrentTripData();
+        saveCurrentTripData();
+        nextTick(async function() { await updateRouteTimes(); });
       };
       const removeAccommodation = (dayId) => {
         const newAcc = Object.assign({}, accommodations.value); delete newAcc[dayId]; accommodations.value = newAcc;
@@ -1610,7 +1614,7 @@
           let pending = predictions.slice(0, 5).length;
           if (pending === 0) { callback([]); return; }
           predictions.slice(0, 5).forEach(function(pred) {
-            detailSvc.getDetails({ placeId: pred.place_id, fields: ['name', 'geometry', 'formatted_address', 'address_components', 'types'] }, function(place, st) {
+            detailSvc.getDetails({ placeId: pred.place_id, fields: ['name', 'geometry', 'formatted_address', 'address_components', 'types'], language: 'en' }, function(place, st) {
               if (st === google.maps.places.PlacesServiceStatus.OK && place && place.geometry) {
                 const comps = place.address_components || [];
                 const cityComp = comps.find(function(a) { return a.types.indexOf('locality') !== -1 || a.types.indexOf('administrative_area_level_1') !== -1; });
