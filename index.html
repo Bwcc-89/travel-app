@@ -297,17 +297,18 @@
     <main class="flex-1 overflow-y-auto no-scrollbar pb-28 bg-[#fafbfc] relative">
       
       <div v-show="activeTab === 'itinerary'" class="animate-fade-in relative">
-        <div class="bg-white sticky top-0 z-20 shadow-sm border-b border-gray-100">
-          <!-- Day tabs -->
-          <div class="flex overflow-x-auto no-scrollbar px-4 pt-3 pb-2 space-x-3">
+        <div class="bg-white border-b border-gray-100 sticky top-0 z-20 shadow-sm">
+          <div class="flex overflow-x-auto no-scrollbar px-4 py-3 space-x-3">
             <button v-for="day in tripDays" :key="day.id" @click="activeDay = day.id"
                     :class="activeDay === day.id ? 'bg-[#4b8f7e] text-white shadow-md shadow-teal-200' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'"
                     class="flex-shrink-0 px-5 py-2 rounded-full text-sm font-medium tracking-wide transition-all duration-300">
               {{ day.name }}
             </button>
           </div>
-          <!-- 直接新增 / 景點庫 按鈕列 -->
-          <div class="flex justify-between items-center px-5 pb-3 pt-1">
+        </div>
+
+        <div class="p-5 space-y-4">
+          <div class="flex justify-between items-center mb-4">
             <h2 class="text-sm font-bold text-gray-500 tracking-widest">{{ currentDayName }} 行程</h2>
             <div class="flex items-center gap-2">
               <button @click="showAddItinerary = !showAddItinerary; newItinerary.place = ''; newItinerary.lat = null; directAddSuggestions = []" class="text-[#4b8f7e] text-xs flex items-center bg-teal-50 px-3 py-1.5 rounded-full hover:bg-teal-100 transition font-bold shadow-sm border border-teal-100">
@@ -318,10 +319,6 @@
               </button>
             </div>
           </div>
-        </div>
-
-        <div class="p-5 space-y-4">
-          <div>
 
           <!-- 直接新增景點表單 -->
           <transition name="modal">
@@ -413,7 +410,7 @@
                 </div>
                 
                 <div class="flex-1 pb-1 relative">
-                  <div v-if="editingId !== item.id" :class="item.isAccommodation ? 'bg-indigo-50 border-indigo-100' : 'bg-white border-gray-100'" class="p-4 rounded-2xl border shadow-sm relative overflow-hidden flex flex-col">
+                  <div v-if="editingId !== item.id" class="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm relative overflow-hidden flex flex-col">
                     <div v-if="item.lat" class="absolute top-0 right-0 w-2 h-2 bg-[#4b8f7e] rounded-full mt-3 mr-3 shadow-sm"></div>
                     
                     <div class="flex justify-start items-start">
@@ -528,7 +525,6 @@
                 <option value="default">預設 (加入時間)</option>
                 <option value="unscheduled">未排入優先</option>
                 <option value="city">依城市分組</option>
-                <option value="tag">依景點類型</option>
               </select>
               <i class="fa-solid fa-sort absolute right-2.5 top-2 text-teal-600 pointer-events-none text-[10px]"></i>
             </div>
@@ -581,7 +577,6 @@
               <div v-if="wishlistSortMode !== 'default'" class="flex items-center space-x-2 mb-1 mt-3">
                 <span class="text-[11px] font-black tracking-wider text-gray-600 bg-white border border-gray-200 px-3 py-1 rounded-full shadow-sm flex items-center">
                   <i v-if="wishlistSortMode === 'city'" class="fa-solid fa-city text-teal-500 mr-1.5"></i>
-                  <i v-else-if="wishlistSortMode === 'tag' && group.groupIcon" :class="['fa-solid', group.groupIcon, 'text-teal-500 mr-1.5']"></i>
                   <i v-else-if="group.groupName === '未排入行程'" class="fa-solid fa-heart text-rose-400 mr-1.5"></i>
                   <i v-else class="fa-solid fa-calendar-check text-teal-500 mr-1.5"></i>
                   {{ group.groupName }}
@@ -1333,51 +1328,10 @@
       const saveAccommodation = () => {
         if (!accommodationModal.value.place.trim()) return alert('請輸入住宿名稱！');
         const dayId = accommodationModal.value.dayId;
-        const accomData = { place: accommodationModal.value.place.trim(), lat: accommodationModal.value.lat, lng: accommodationModal.value.lng, city: accommodationModal.value.city, placeId: accommodationModal.value.placeId || null };
-        accommodations.value = Object.assign({}, accommodations.value, { [dayId]: accomData });
-
-        // 需求5：加入景點庫（若不存在）
-        const alreadyInWL = wishlist.value.some(function(w) { return w.place === accomData.place || (accomData.placeId && w.placeId === accomData.placeId); });
-        if (!alreadyInWL) {
-          wishlist.value.unshift({ id: Date.now() + 2, place: accomData.place, lat: accomData.lat || null, lng: accomData.lng || null, city: accomData.city || '住宿', tag: 'accommodation', placeId: accomData.placeId || null, weather: null, weatherLoading: false });
-        }
-
-        // 需求4：當晚住宿加入當日行程最後一站
-        const dayItems = itinerary.value.filter(function(i) { return i.dayId === dayId; });
-        const accomAlreadyInItinerary = dayItems.some(function(i) { return i.isAccommodation && i.accommodationDayId === dayId; });
-        if (!accomAlreadyInItinerary) {
-          const maxOrder = dayItems.length > 0 ? Math.max.apply(null, dayItems.map(function(i) { return i.order || 0; })) + 1 : 0;
-          itinerary.value.push({ id: Date.now() + 3, dayId: dayId, time: '', stayDuration: 0, place: accomData.place, lat: accomData.lat || null, lng: accomData.lng || null, city: accomData.city || '住宿', tag: 'accommodation', placeId: accomData.placeId || null, isAccommodation: true, accommodationDayId: dayId, weather: null, weatherLoading: false, isEditing: false, travelTime: null, routeKey: '', transportMode: 'driving', order: maxOrder });
-        } else {
-          // 更新已存在的住宿站點
-          const existing = itinerary.value.find(function(i) { return i.dayId === dayId && i.isAccommodation && i.accommodationDayId === dayId; });
-          if (existing) { existing.place = accomData.place; existing.lat = accomData.lat; existing.lng = accomData.lng; existing.city = accomData.city; existing.placeId = accomData.placeId; existing.routeKey = ''; }
-        }
-
-        // 需求4：前晚住宿加入隔天行程第一站
-        const nextDayId = dayId + 1;
-        const nextDayItems = itinerary.value.filter(function(i) { return i.dayId === nextDayId; });
-        const prevAccomInNext = nextDayItems.some(function(i) { return i.isAccommodation && i.accommodationDayId === dayId; });
-        if (nextDayId <= (tripDays.value.length) && !prevAccomInNext) {
-          // 把現有行程 order 都往後移一位
-          nextDayItems.forEach(function(i) { i.order = (i.order || 0) + 1; });
-          itinerary.value.push({ id: Date.now() + 4, dayId: nextDayId, time: '09:00', stayDuration: 0, place: accomData.place, lat: accomData.lat || null, lng: accomData.lng || null, city: accomData.city || '住宿', tag: 'accommodation', placeId: accomData.placeId || null, isAccommodation: true, isPrevDayAccom: true, accommodationDayId: dayId, weather: null, weatherLoading: false, isEditing: false, travelTime: null, routeKey: '', transportMode: 'driving', order: 0 });
-        } else if (nextDayId <= (tripDays.value.length)) {
-          // 更新已存在的前晚住宿站點
-          const existingPrev = itinerary.value.find(function(i) { return i.dayId === nextDayId && i.isAccommodation && i.accommodationDayId === dayId; });
-          if (existingPrev) { existingPrev.place = accomData.place; existingPrev.lat = accomData.lat; existingPrev.lng = accomData.lng; existingPrev.city = accomData.city; existingPrev.placeId = accomData.placeId; existingPrev.routeKey = ''; }
-        }
-
-        accommodationModal.value.show = false; accomSuggestions.value = [];
-        saveCurrentTripData();
-        nextTick(async function() { await updateRouteTimes(); });
+        accommodations.value = Object.assign({}, accommodations.value, { [dayId]: { place: accommodationModal.value.place.trim(), lat: accommodationModal.value.lat, lng: accommodationModal.value.lng, city: accommodationModal.value.city, placeId: accommodationModal.value.placeId || null } });
+        accommodationModal.value.show = false; accomSuggestions.value = []; saveCurrentTripData();
       };
-      const removeAccommodation = (dayId) => {
-        const newAcc = Object.assign({}, accommodations.value); delete newAcc[dayId]; accommodations.value = newAcc;
-        // 同步移除行程中的住宿站點
-        itinerary.value = itinerary.value.filter(function(i) { return !(i.isAccommodation && i.accommodationDayId === dayId); });
-        saveCurrentTripData();
-      };
+      const removeAccommodation = (dayId) => { const newAcc = Object.assign({}, accommodations.value); delete newAcc[dayId]; accommodations.value = newAcc; saveCurrentTripData(); };
 
       // ── 直接新增 ──
       const handleDirectAddSearch = (e) => {
@@ -1569,7 +1523,7 @@
         try {
           let latitude = itemRef.lat; let longitude = itemRef.lng;
           if (!latitude || !longitude) {
-            const geoRes = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(place) + '&limit=1&addressdetails=1&accept-language=en');
+            const geoRes = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(place) + '&limit=1&addressdetails=1&accept-language=zh-TW,en');
             const geoData = await geoRes.json();
             if (geoData.length === 0) { itemRef.weatherLoading = false; return; }
             latitude = parseFloat(geoData[0].lat); longitude = parseFloat(geoData[0].lon);
@@ -1594,7 +1548,7 @@
         if (!query || !query.trim()) { callback([]); return; }
         if (typeof google === 'undefined' || !google.maps || !google.maps.places) {
           // Google 未載入時 fallback Nominatim
-          fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(query) + '&limit=5&addressdetails=1&accept-language=en')
+          fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(query) + '&limit=5&addressdetails=1&accept-language=zh-TW,en')
             .then(function(r) { return r.json(); })
             .then(function(data) {
               callback(data.map(function(item) {
@@ -1605,14 +1559,14 @@
           return;
         }
         const svc = new google.maps.places.AutocompleteService();
-        svc.getPlacePredictions({ input: query, language: 'en' }, function(predictions, status) {
+        svc.getPlacePredictions({ input: query, language: 'zh-TW' }, function(predictions, status) {
           if (status !== google.maps.places.PlacesServiceStatus.OK || !predictions) { callback([]); return; }
           const detailSvc = new google.maps.places.PlacesService(document.createElement('div'));
           const results = [];
           let pending = predictions.slice(0, 5).length;
           if (pending === 0) { callback([]); return; }
           predictions.slice(0, 5).forEach(function(pred) {
-            detailSvc.getDetails({ placeId: pred.place_id, fields: ['name', 'geometry', 'formatted_address', 'address_components', 'types'], language: 'en' }, function(place, st) {
+            detailSvc.getDetails({ placeId: pred.place_id, fields: ['name', 'geometry', 'formatted_address', 'address_components', 'types'] }, function(place, st) {
               if (st === google.maps.places.PlacesServiceStatus.OK && place && place.geometry) {
                 const comps = place.address_components || [];
                 const cityComp = comps.find(function(a) { return a.types.indexOf('locality') !== -1 || a.types.indexOf('administrative_area_level_1') !== -1; });
@@ -1813,18 +1767,6 @@
           const groups = {};
           wishlist.value.forEach(function(item) { const cityName = item.city || '其他地區'; if (!groups[cityName]) groups[cityName] = []; groups[cityName].push(item); });
           return Object.keys(groups).sort().map(function(city) { return { groupName: city, items: groups[city] }; });
-        }
-        else if (wishlistSortMode.value === 'tag') {
-          const groups = {};
-          wishlist.value.forEach(function(item) {
-            const tagId = item.tag || 'landmark';
-            const tagInfo = availableTags.find(function(t) { return t.id === tagId; }) || availableTags[0];
-            const key = tagInfo.name;
-            if (!groups[key]) groups[key] = { icon: tagInfo.icon, items: [] };
-            groups[key].items.push(item);
-          });
-          const tagOrder = availableTags.map(function(t) { return t.name; });
-          return tagOrder.filter(function(k) { return groups[k]; }).map(function(k) { return { groupName: k, groupIcon: groups[k].icon, items: groups[k].items }; });
         }
         return [];
       });
