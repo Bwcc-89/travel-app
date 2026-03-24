@@ -998,23 +998,47 @@
         nextTick(function(){ tripList.value.show = true; });
       };
 
+      const firestoreWriteCount = { count: 0, lastReset: Date.now() };
       const saveTripToFirestore = async () => {
         if (!firebaseDb || !user.value || !currentTripId.value) return;
         const id = currentTripId.value;
         const tripRef = firebaseDb.collection('trips').doc(id);
-        await tripRef.set({
-          ownerUid: user.value.uid,
-          data: {
-            config: tripConfig.value,
-            days: tripDays.value,
-            itinerary: itinerary.value,
-            wishlist: wishlist.value,
-            expenses: expenses.value,
-            members: membersInput.value,
-            accommodations: accommodations.value
-          },
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
+        try {
+          await tripRef.set({
+            ownerUid: user.value.uid,
+            data: {
+              config: tripConfig.value,
+              days: tripDays.value,
+              itinerary: itinerary.value,
+              wishlist: wishlist.value,
+              expenses: expenses.value,
+              members: membersInput.value,
+              accommodations: accommodations.value
+            },
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          }, { merge: true });
+          // 寫入計數（每天重置），接近免費額度上限時警告
+          const now = Date.now();
+          if (now - firestoreWriteCount.lastReset > 86400000) {
+            firestoreWriteCount.count = 0;
+            firestoreWriteCount.lastReset = now;
+          }
+          firestoreWriteCount.count++;
+          if (firestoreWriteCount.count >= 400) {
+            console.warn('[用量警告] 今日 Firestore 寫入已達', firestoreWriteCount.count, '次，接近免費額度');
+          }
+        } catch (e) {
+          if (e.code === 'resource-exhausted' || (e.message && e.message.includes('quota'))) {
+            console.error('[用量超限] Firestore 免費額度已用完，資料暫時無法儲存');
+            // 顯示提示（不阻斷使用者操作）
+            if (!document._quotaWarningShown) {
+              document._quotaWarningShown = true;
+              alert('⚠️ 今日雲端儲存用量已達上限，資料暫時儲存在本機。明天自動恢復。');
+            }
+          } else {
+            throw e;
+          }
+        }
       };
 
       const loadTripFromFirestore = async (id) => {
@@ -1248,6 +1272,7 @@
         currentTripId.value = id;
         if (firebaseEnabled.value && user.value && firebaseDb) {
           const ok = await loadTripFromFirestore(id);
+          await nextTick(); // 等 watch 執行完再清 flag，防止 members 修改觸發誤存
           _loadingTripData = false;
           if (ok) return;
         }
@@ -1363,7 +1388,10 @@
         const nextDay = dayId + 1;
         if (nextDay <= tripDays.value.length) {
           const startId = 'accom-start-' + dayId;
-          itinerary.value.forEach(function(i) { if (i.dayId === nextDay && i.id !== startId) i.order = (i.order||0) + 1; });
+          // 只有 startId 不存在時才 +1，避免重複儲存時 order 累積
+          if (!itinerary.value.some(function(i) { return i.id === startId; })) {
+            itinerary.value.forEach(function(i) { if (i.dayId === nextDay && i.id !== startId) i.order = (i.order||0) + 1; });
+          }
           const startIdx = itinerary.value.findIndex(function(i) { return i.id === startId; });
           const startItem = { id: startId, dayId: nextDay, time: '', stayDuration: 0, place: accom.place, lat: accom.lat||null, lng: accom.lng||null, city: accom.city||'', tag: 'accommodation', placeId: accom.placeId||null, isAccommodation: true, weather: null, weatherLoading: false, isEditing: false, travelTime: null, routeKey: '', transportMode: 'driving', order: 0 };
           if (startIdx >= 0) { Object.assign(itinerary.value[startIdx], { place: accom.place, lat: accom.lat||null, lng: accom.lng||null, city: accom.city||'', placeId: accom.placeId||null, routeKey: '' }); }
