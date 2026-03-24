@@ -1337,19 +1337,29 @@
       const saveAccommodation = async () => {
         if (!accommodationModal.value.place.trim()) return alert('請輸入住宿名稱！');
         const dayId = accommodationModal.value.dayId;
-        const accom = { place: accommodationModal.value.place.trim(), lat: accommodationModal.value.lat, lng: accommodationModal.value.lng, city: accommodationModal.value.city, placeId: accommodationModal.value.placeId || null };
+        const accom = {
+          place: accommodationModal.value.place.trim(),
+          lat: accommodationModal.value.lat, lng: accommodationModal.value.lng,
+          city: accommodationModal.value.city, placeId: accommodationModal.value.placeId || null
+        };
         accommodations.value = Object.assign({}, accommodations.value, { [dayId]: accom });
+
+        // 加入景點庫（若不存在）
+        const inWL = wishlist.value.some(function(w) { return (accom.placeId && w.placeId === accom.placeId) || w.place === accom.place; });
+        if (!inWL) {
+          wishlist.value.unshift({ id: 'wl-accom-' + dayId + '-' + Date.now(), place: accom.place, lat: accom.lat||null, lng: accom.lng||null, city: accom.city||'', tag: 'accommodation', placeId: accom.placeId||null, weather: null, weatherLoading: false });
+        }
 
         // 當晚住宿 → 當日行程最後一站
         const endId = 'accom-end-' + dayId;
         const dayItems = itinerary.value.filter(function(i) { return i.dayId === dayId && i.id !== endId; });
-        const maxOrder = dayItems.length > 0 ? Math.max.apply(null, dayItems.map(function(i) { return i.order || 0; })) + 1 : 0;
+        const maxOrder = dayItems.length > 0 ? Math.max.apply(null, dayItems.map(function(i) { return i.order||0; })) + 1 : 0;
         const endIdx = itinerary.value.findIndex(function(i) { return i.id === endId; });
         const endItem = { id: endId, dayId: dayId, time: '', stayDuration: 0, place: accom.place, lat: accom.lat||null, lng: accom.lng||null, city: accom.city||'', tag: 'accommodation', placeId: accom.placeId||null, isAccommodation: true, weather: null, weatherLoading: false, isEditing: false, travelTime: null, routeKey: '', transportMode: 'driving', order: maxOrder };
-        if (endIdx >= 0) { Object.assign(itinerary.value[endIdx], { place: accom.place, lat: accom.lat||null, lng: accom.lng||null, city: accom.city||'', placeId: accom.placeId||null, routeKey: '' }); }
+        if (endIdx >= 0) { Object.assign(itinerary.value[endIdx], { place: accom.place, lat: accom.lat||null, lng: accom.lng||null, city: accom.city||'', placeId: accom.placeId||null, order: maxOrder, routeKey: '' }); }
         else { itinerary.value.push(endItem); }
 
-        // 前晚住宿起點 → 隔天行程第一站（order 0）
+        // 前晚住宿起點 → 隔天行程第一站
         const nextDay = dayId + 1;
         if (nextDay <= tripDays.value.length) {
           const startId = 'accom-start-' + dayId;
@@ -1809,7 +1819,7 @@
         else if (wishlistSortMode.value === 'tag') {
           const groups = {};
           wishlist.value.forEach(function(item) {
-            const tagInfo = availableTags.find(function(t) { return t.id === (item.tag || 'landmark'); }) || availableTags[0];
+            const tagInfo = availableTags.find(function(t) { return t.id === (item.tag||'landmark'); }) || availableTags[0];
             if (!groups[tagInfo.id]) groups[tagInfo.id] = { name: tagInfo.name, icon: tagInfo.icon, items: [] };
             groups[tagInfo.id].items.push(item);
           });
