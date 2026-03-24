@@ -192,6 +192,63 @@
     </div>
   </transition>
 
+  <!-- 直接新增景點 Modal -->
+  <transition name="fade">
+    <div v-if="showAddItinerary" class="absolute inset-0 z-[350] bg-black/40 backdrop-blur-sm flex items-end justify-center" @click.self="showAddItinerary = false; directAddSuggestions = []">
+      <transition name="modal" appear>
+        <div class="bg-white rounded-t-[2rem] p-6 w-full shadow-2xl pb-10 max-h-[85vh] overflow-y-auto">
+          <div class="w-10 h-1 bg-gray-200 rounded-full mx-auto mb-5"></div>
+          <h3 class="text-lg font-black text-gray-800 mb-1">直接新增景點</h3>
+          <p class="text-xs text-gray-400 mb-5">加入 {{ currentDayName }}</p>
+          <div class="space-y-4">
+            <div>
+              <label class="text-[10px] font-bold text-gray-400 ml-1">景點名稱（可搜尋連結地點）</label>
+              <div class="relative mt-1">
+                <input :value="newItinerary.place" @input="handleDirectAddSearch" type="text"
+                  class="w-full p-3 bg-gray-50 text-gray-700 border-none rounded-xl outline-none text-sm font-medium focus:ring-2 focus:ring-[#4b8f7e] pr-10"
+                  placeholder="輸入或搜尋景點名稱...">
+                <div v-if="directAddSearching" class="absolute right-3 top-3 text-gray-300"><i class="fa-solid fa-spinner fa-spin"></i></div>
+                <div v-else-if="newItinerary.lat" class="absolute right-3 top-3 text-teal-500"><i class="fa-solid fa-location-dot"></i></div>
+                <div v-else class="absolute right-3 top-3 text-gray-300"><i class="fa-solid fa-magnifying-glass"></i></div>
+                <ul v-if="directAddSuggestions.length > 0" class="absolute z-50 w-full bg-white border border-gray-200 rounded-xl shadow-xl mt-1 max-h-52 overflow-y-auto">
+                  <li v-for="place in directAddSuggestions" :key="place.id" @click="selectDirectAddPlace(place)"
+                    class="cursor-pointer px-4 py-3 hover:bg-[#e0f4ec] border-b border-gray-50 last:border-b-0 transition flex flex-col">
+                    <span class="text-sm font-bold text-gray-700">{{ place.name }}</span>
+                    <span class="text-[10px] text-gray-400 mt-0.5 truncate">{{ place.address }}</span>
+                  </li>
+                </ul>
+              </div>
+              <div v-if="newItinerary.lat" class="text-[10px] text-teal-600 font-bold mt-1.5 ml-1"><i class="fa-solid fa-check mr-1"></i>已連結地點座標</div>
+            </div>
+            <div class="flex gap-3">
+              <div class="flex-1">
+                <label class="text-[10px] font-bold text-gray-400 ml-1">停留時間（分鐘）</label>
+                <input v-model.number="newItinerary.stayDuration" type="number" min="1" class="w-full mt-1 p-3 bg-gray-50 text-gray-700 border-none rounded-xl outline-none text-sm font-bold text-center focus:ring-2 focus:ring-[#4b8f7e]">
+              </div>
+              <div class="flex-1">
+                <label class="text-[10px] font-bold text-gray-400 ml-1">分類</label>
+                <div class="relative mt-1">
+                  <select v-model="newItinerary.tag" class="w-full p-3 bg-gray-50 text-gray-700 border-none rounded-xl outline-none text-xs font-bold appearance-none focus:ring-2 focus:ring-[#4b8f7e]">
+                    <option v-for="t in availableTags" :value="t.id">{{ t.name }}</option>
+                  </select>
+                  <i class="fa-solid fa-chevron-down absolute right-3 top-3.5 text-gray-400 text-[10px] pointer-events-none"></i>
+                </div>
+              </div>
+            </div>
+            <div v-if="timelineItinerary.length === 0">
+              <label class="text-[10px] font-bold text-gray-400 ml-1">出發時間（第一站）</label>
+              <input v-model="newItinerary.time" type="time" class="w-full mt-1 p-3 bg-gray-50 text-gray-700 border-none rounded-xl outline-none text-sm focus:ring-2 focus:ring-[#4b8f7e]">
+            </div>
+          </div>
+          <div class="flex gap-3 mt-6">
+            <button @click="showAddItinerary = false; directAddSuggestions = []" class="flex-1 bg-gray-100 text-gray-500 py-3 rounded-xl text-sm font-bold">取消</button>
+            <button @click="addItineraryDirect" class="flex-1 bg-[#4b8f7e] text-white py-3 rounded-xl text-sm font-bold shadow-md hover:bg-[#3d7567] transition">加入行程</button>
+          </div>
+        </div>
+      </transition>
+    </div>
+  </transition>
+
   <!-- 分享行程：邀請成員（Firebase） -->
   <transition name="fade">
     <div v-if="shareModal.show" class="absolute inset-0 z-[300] bg-black/40 backdrop-blur-sm flex items-center justify-center p-5">
@@ -297,21 +354,18 @@
     <main class="flex-1 overflow-y-auto no-scrollbar pb-28 bg-[#fafbfc] relative">
       
       <div v-show="activeTab === 'itinerary'" class="animate-fade-in relative">
-        <div class="bg-white border-b border-gray-100 sticky top-0 z-20 shadow-sm">
-          <div class="flex overflow-x-auto no-scrollbar px-4 py-3 space-x-3">
+        <div class="bg-white sticky top-0 z-20 border-b border-gray-100 shadow-sm">
+          <div class="flex overflow-x-auto no-scrollbar px-4 pt-3 pb-2 space-x-3">
             <button v-for="day in tripDays" :key="day.id" @click="activeDay = day.id"
                     :class="activeDay === day.id ? 'bg-[#4b8f7e] text-white shadow-md shadow-teal-200' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'"
                     class="flex-shrink-0 px-5 py-2 rounded-full text-sm font-medium tracking-wide transition-all duration-300">
               {{ day.name }}
             </button>
           </div>
-        </div>
-
-        <div class="p-5 space-y-4">
-          <div class="flex justify-between items-center mb-4">
+          <div class="flex justify-between items-center px-5 pb-3">
             <h2 class="text-sm font-bold text-gray-500 tracking-widest">{{ currentDayName }} 行程</h2>
             <div class="flex items-center gap-2">
-              <button @click="showAddItinerary = !showAddItinerary; newItinerary.place = ''; newItinerary.lat = null; directAddSuggestions = []" class="text-[#4b8f7e] text-xs flex items-center bg-teal-50 px-3 py-1.5 rounded-full hover:bg-teal-100 transition font-bold shadow-sm border border-teal-100">
+              <button @click="showAddItinerary = true; newItinerary.place = ''; newItinerary.lat = null; newItinerary.placeId = null; newItinerary.stayDuration = 120; newItinerary.tag = 'landmark'; directAddSuggestions = []" class="text-[#4b8f7e] text-xs flex items-center bg-teal-50 px-3 py-1.5 rounded-full hover:bg-teal-100 transition font-bold shadow-sm border border-teal-100">
                 <i class="fa-solid fa-plus mr-1.5"></i>直接新增
               </button>
               <button @click="activeTab = 'wishlist'" class="text-[#4b8f7e] text-xs flex items-center bg-teal-50 px-3 py-1.5 rounded-full hover:bg-teal-100 transition font-bold shadow-sm border border-teal-100">
@@ -319,56 +373,9 @@
               </button>
             </div>
           </div>
+        </div>
 
-          <!-- 直接新增景點表單 -->
-          <transition name="modal">
-            <div v-if="showAddItinerary" class="bg-white p-4 rounded-2xl border border-teal-200 shadow-md mb-4">
-              <div class="space-y-3">
-                <div>
-                  <label class="text-[10px] font-bold text-gray-400 ml-1">景點名稱（可搜尋連結地點）</label>
-                  <div class="relative mt-1">
-                    <input :value="newItinerary.place" @input="handleDirectAddSearch" type="text"
-                      class="w-full p-3 bg-gray-50 text-gray-700 border-none rounded-xl outline-none text-sm font-medium focus:ring-2 focus:ring-[#4b8f7e] pr-10"
-                      placeholder="輸入或搜尋景點名稱...">
-                    <div v-if="directAddSearching" class="absolute right-3 top-3 text-gray-300"><i class="fa-solid fa-spinner fa-spin"></i></div>
-                    <div v-else-if="newItinerary.lat" class="absolute right-3 top-3 text-teal-500"><i class="fa-solid fa-location-dot"></i></div>
-                    <div v-else class="absolute right-3 top-3 text-gray-300"><i class="fa-solid fa-magnifying-glass"></i></div>
-                    <ul v-if="directAddSuggestions.length > 0" class="absolute z-50 w-full bg-white border border-gray-200 rounded-xl shadow-xl mt-1 max-h-48 overflow-y-auto">
-                      <li v-for="place in directAddSuggestions" :key="place.id" @click="selectDirectAddPlace(place)"
-                        class="cursor-pointer px-4 py-3 hover:bg-[#e0f4ec] border-b border-gray-50 last:border-b-0 transition flex flex-col">
-                        <span class="text-sm font-bold text-gray-700">{{ place.name }}</span>
-                        <span class="text-[10px] text-gray-400 mt-0.5 truncate">{{ place.address }}</span>
-                      </li>
-                    </ul>
-                  </div>
-                  <div v-if="newItinerary.lat" class="text-[10px] text-teal-600 font-bold mt-1 ml-1"><i class="fa-solid fa-check mr-1"></i>已連結地點座標</div>
-                </div>
-                <div class="flex gap-3">
-                  <div class="flex-1">
-                    <label class="text-[10px] font-bold text-gray-400 ml-1">停留時間（分鐘）</label>
-                    <input v-model.number="newItinerary.stayDuration" type="number" min="1" class="w-full mt-1 p-3 bg-gray-50 text-gray-700 border-none rounded-xl outline-none text-sm font-bold text-center focus:ring-2 focus:ring-[#4b8f7e]">
-                  </div>
-                  <div class="flex-1">
-                    <label class="text-[10px] font-bold text-gray-400 ml-1">分類</label>
-                    <div class="relative mt-1">
-                      <select v-model="newItinerary.tag" class="w-full p-3 bg-gray-50 text-gray-700 border-none rounded-xl outline-none text-xs font-bold appearance-none focus:ring-2 focus:ring-[#4b8f7e]">
-                        <option v-for="t in availableTags" :value="t.id">{{ t.name }}</option>
-                      </select>
-                      <i class="fa-solid fa-chevron-down absolute right-3 top-3.5 text-gray-400 text-[10px] pointer-events-none"></i>
-                    </div>
-                  </div>
-                </div>
-                <div v-if="timelineItinerary.length === 0">
-                  <label class="text-[10px] font-bold text-gray-400 ml-1">出發時間（第一站）</label>
-                  <input v-model="newItinerary.time" type="time" class="w-full mt-1 p-3 bg-gray-50 text-gray-700 border-none rounded-xl outline-none text-sm focus:ring-2 focus:ring-[#4b8f7e]">
-                </div>
-              </div>
-              <div class="flex gap-2 mt-4">
-                <button @click="showAddItinerary = false; newItinerary.place = ''; directAddSuggestions = []" class="flex-1 bg-gray-100 text-gray-500 py-2.5 rounded-xl text-sm font-bold">取消</button>
-                <button @click="addItineraryDirect" class="flex-1 bg-[#4b8f7e] text-white py-2.5 rounded-xl text-sm font-bold shadow-md hover:bg-[#3d7567] transition">加入行程</button>
-              </div>
-            </div>
-          </transition>
+        <div class="p-5 space-y-4">
 
           <!-- 前一天住宿提示 -->
           <div v-if="prevDayAccommodation" class="flex items-center bg-indigo-50 border border-indigo-100 rounded-2xl px-4 py-3 mb-2">
@@ -410,7 +417,7 @@
                 </div>
                 
                 <div class="flex-1 pb-1 relative">
-                  <div v-if="editingId !== item.id" class="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm relative overflow-hidden flex flex-col">
+                  <div v-if="editingId !== item.id" :class="item.isAccommodation ? 'bg-indigo-50 border-indigo-100' : 'bg-white border-gray-100'" class="p-4 rounded-2xl border shadow-sm relative overflow-hidden flex flex-col">
                     <div v-if="item.lat" class="absolute top-0 right-0 w-2 h-2 bg-[#4b8f7e] rounded-full mt-3 mr-3 shadow-sm"></div>
                     
                     <div class="flex justify-start items-start">
@@ -525,6 +532,7 @@
                 <option value="default">預設 (加入時間)</option>
                 <option value="unscheduled">未排入優先</option>
                 <option value="city">依城市分組</option>
+                <option value="tag">依景點類型</option>
               </select>
               <i class="fa-solid fa-sort absolute right-2.5 top-2 text-teal-600 pointer-events-none text-[10px]"></i>
             </div>
@@ -576,7 +584,8 @@
             <div v-if="group.items.length > 0" class="space-y-3">
               <div v-if="wishlistSortMode !== 'default'" class="flex items-center space-x-2 mb-1 mt-3">
                 <span class="text-[11px] font-black tracking-wider text-gray-600 bg-white border border-gray-200 px-3 py-1 rounded-full shadow-sm flex items-center">
-                  <i v-if="wishlistSortMode === 'city'" class="fa-solid fa-city text-teal-500 mr-1.5"></i>
+                  <i v-if="wishlistSortMode === 'tag' && group.groupIcon" :class="['fa-solid', group.groupIcon, 'text-teal-500 mr-1.5']"></i>
+                  <i v-else-if="wishlistSortMode === 'city'" class="fa-solid fa-city text-teal-500 mr-1.5"></i>
                   <i v-else-if="group.groupName === '未排入行程'" class="fa-solid fa-heart text-rose-400 mr-1.5"></i>
                   <i v-else class="fa-solid fa-calendar-check text-teal-500 mr-1.5"></i>
                   {{ group.groupName }}
@@ -1325,13 +1334,42 @@
         }, 300);
       };
       const selectAccomPlace = (place) => { accommodationModal.value.place = place.name; accommodationModal.value.lat = place.lat; accommodationModal.value.lng = place.lng; accommodationModal.value.city = place.city; accommodationModal.value.placeId = place.placeId || null; accomSuggestions.value = []; };
-      const saveAccommodation = () => {
+      const saveAccommodation = async () => {
         if (!accommodationModal.value.place.trim()) return alert('請輸入住宿名稱！');
         const dayId = accommodationModal.value.dayId;
-        accommodations.value = Object.assign({}, accommodations.value, { [dayId]: { place: accommodationModal.value.place.trim(), lat: accommodationModal.value.lat, lng: accommodationModal.value.lng, city: accommodationModal.value.city, placeId: accommodationModal.value.placeId || null } });
-        accommodationModal.value.show = false; accomSuggestions.value = []; saveCurrentTripData();
+        const accom = { place: accommodationModal.value.place.trim(), lat: accommodationModal.value.lat, lng: accommodationModal.value.lng, city: accommodationModal.value.city, placeId: accommodationModal.value.placeId || null };
+        accommodations.value = Object.assign({}, accommodations.value, { [dayId]: accom });
+
+        // 當晚住宿 → 當日行程最後一站
+        const endId = 'accom-end-' + dayId;
+        const dayItems = itinerary.value.filter(function(i) { return i.dayId === dayId && i.id !== endId; });
+        const maxOrder = dayItems.length > 0 ? Math.max.apply(null, dayItems.map(function(i) { return i.order || 0; })) + 1 : 0;
+        const endIdx = itinerary.value.findIndex(function(i) { return i.id === endId; });
+        const endItem = { id: endId, dayId: dayId, time: '', stayDuration: 0, place: accom.place, lat: accom.lat||null, lng: accom.lng||null, city: accom.city||'', tag: 'accommodation', placeId: accom.placeId||null, isAccommodation: true, weather: null, weatherLoading: false, isEditing: false, travelTime: null, routeKey: '', transportMode: 'driving', order: maxOrder };
+        if (endIdx >= 0) { Object.assign(itinerary.value[endIdx], { place: accom.place, lat: accom.lat||null, lng: accom.lng||null, city: accom.city||'', placeId: accom.placeId||null, routeKey: '' }); }
+        else { itinerary.value.push(endItem); }
+
+        // 前晚住宿起點 → 隔天行程第一站（order 0）
+        const nextDay = dayId + 1;
+        if (nextDay <= tripDays.value.length) {
+          const startId = 'accom-start-' + dayId;
+          itinerary.value.forEach(function(i) { if (i.dayId === nextDay && i.id !== startId) i.order = (i.order||0) + 1; });
+          const startIdx = itinerary.value.findIndex(function(i) { return i.id === startId; });
+          const startItem = { id: startId, dayId: nextDay, time: '', stayDuration: 0, place: accom.place, lat: accom.lat||null, lng: accom.lng||null, city: accom.city||'', tag: 'accommodation', placeId: accom.placeId||null, isAccommodation: true, weather: null, weatherLoading: false, isEditing: false, travelTime: null, routeKey: '', transportMode: 'driving', order: 0 };
+          if (startIdx >= 0) { Object.assign(itinerary.value[startIdx], { place: accom.place, lat: accom.lat||null, lng: accom.lng||null, city: accom.city||'', placeId: accom.placeId||null, routeKey: '' }); }
+          else { itinerary.value.push(startItem); }
+        }
+
+        accommodationModal.value.show = false; accomSuggestions.value = [];
+        saveCurrentTripData();
+        await nextTick();
+        await updateRouteTimes();
       };
-      const removeAccommodation = (dayId) => { const newAcc = Object.assign({}, accommodations.value); delete newAcc[dayId]; accommodations.value = newAcc; saveCurrentTripData(); };
+      const removeAccommodation = async (dayId) => {
+        const a = Object.assign({}, accommodations.value); delete a[dayId]; accommodations.value = a;
+        itinerary.value = itinerary.value.filter(function(i) { return i.id !== 'accom-end-'+dayId && i.id !== 'accom-start-'+dayId; });
+        saveCurrentTripData(); await nextTick(); await updateRouteTimes();
+      };
 
       // ── 直接新增 ──
       const handleDirectAddSearch = (e) => {
@@ -1767,6 +1805,15 @@
           const groups = {};
           wishlist.value.forEach(function(item) { const cityName = item.city || '其他地區'; if (!groups[cityName]) groups[cityName] = []; groups[cityName].push(item); });
           return Object.keys(groups).sort().map(function(city) { return { groupName: city, items: groups[city] }; });
+        }
+        else if (wishlistSortMode.value === 'tag') {
+          const groups = {};
+          wishlist.value.forEach(function(item) {
+            const tagInfo = availableTags.find(function(t) { return t.id === (item.tag || 'landmark'); }) || availableTags[0];
+            if (!groups[tagInfo.id]) groups[tagInfo.id] = { name: tagInfo.name, icon: tagInfo.icon, items: [] };
+            groups[tagInfo.id].items.push(item);
+          });
+          return availableTags.filter(function(t) { return groups[t.id]; }).map(function(t) { return { groupName: t.name, groupIcon: t.icon, items: groups[t.id].items }; });
         }
         return [];
       });
