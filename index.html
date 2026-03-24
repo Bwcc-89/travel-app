@@ -181,7 +181,14 @@
                 </li>
               </ul>
             </div>
-            <div v-if="accommodationModal.lat" class="text-[10px] text-teal-600 font-bold mt-1 ml-1"><i class="fa-solid fa-check mr-1"></i>已連結地點座標</div>
+            <div v-if="accommodationModal.lat" class="text-[10px] text-teal-600 font-bold mt-1 ml-1"><i class="fa-solid fa-check mr-1"></i>已連結地點座標（可計算交通時間）</div>
+          </div>
+          <!-- 自訂顯示名稱 -->
+          <div class="mt-4">
+            <label class="text-[10px] font-bold text-gray-400 ml-1">顯示名稱（選填）</label>
+            <input v-model="accommodationModal.nickname" type="text"
+              class="w-full mt-1 p-3 bg-gray-50 text-gray-700 border-none rounded-xl outline-none text-sm font-medium focus:ring-2 focus:ring-[#4b8f7e]"
+              placeholder="例如：小明家、特色民宿...（不填則用上方名稱）">
           </div>
           <div class="flex gap-3 mt-6">
             <button @click="accommodationModal.show = false; accomSuggestions = []" class="flex-1 bg-gray-100 text-gray-500 py-3 rounded-xl text-sm font-bold">取消</button>
@@ -500,6 +507,7 @@
                 <div class="min-w-0">
                   <div class="text-[10px] font-bold text-indigo-400 mb-0.5">今晚住宿</div>
                   <div class="text-sm font-bold text-indigo-700 truncate">{{ currentDayAccommodation.place }}</div>
+                  <div v-if="currentDayAccommodation.address && currentDayAccommodation.address !== currentDayAccommodation.place" class="text-[10px] text-indigo-300 mt-0.5 truncate">{{ currentDayAccommodation.address }}</div>
                   <div v-if="currentDayAccommodation.lat" class="text-[10px] text-indigo-400 mt-0.5"><i class="fa-solid fa-location-dot mr-1"></i>已連結地點</div>
                 </div>
               </div>
@@ -1335,7 +1343,7 @@
 
       // ── 住宿 ──
       const accommodations = ref({});
-      const accommodationModal = ref({ show: false, dayId: null, dayName: '', place: '', lat: null, lng: null, city: '' });
+      const accommodationModal = ref({ show: false, dayId: null, dayName: '', place: '', nickname: '', lat: null, lng: null, city: '' });
       const accomSuggestions = ref([]);
       const accomSearching = ref(false);
       let accomSearchTimeout = null;
@@ -1346,7 +1354,7 @@
       const openAccommodationModal = (dayId) => {
         const day = tripDays.value.find(function(d) { return d.id === dayId; });
         const existing = accommodations.value[dayId] || {};
-        accommodationModal.value = { show: true, dayId: dayId, dayName: day ? day.name : ('Day ' + dayId), place: existing.place || '', lat: existing.lat || null, lng: existing.lng || null, city: existing.city || '' };
+        accommodationModal.value = { show: true, dayId: dayId, dayName: day ? day.name : ('Day ' + dayId), place: existing.place || '', nickname: existing.nickname || '', lat: existing.lat || null, lng: existing.lng || null, city: existing.city || '' };
         accomSuggestions.value = [];
       };
       const handleAccomSearch = (e) => {
@@ -1362,8 +1370,11 @@
       const saveAccommodation = async () => {
         if (!accommodationModal.value.place.trim()) return alert('請輸入住宿名稱！');
         const dayId = accommodationModal.value.dayId;
+        const displayName = accommodationModal.value.nickname.trim() || accommodationModal.value.place.trim();
         const accom = {
-          place: accommodationModal.value.place.trim(),
+          place: displayName,
+          address: accommodationModal.value.place.trim(), // 原始地址/搜尋名
+          nickname: accommodationModal.value.nickname.trim(),
           lat: accommodationModal.value.lat, lng: accommodationModal.value.lng,
           city: accommodationModal.value.city, placeId: accommodationModal.value.placeId || null
         };
@@ -1436,7 +1447,17 @@
         if (!newItinerary.value.place || !newItinerary.value.place.trim()) return alert('請輸入景點名稱！');
         const placeName = newItinerary.value.place.trim();
         const currentDayArr = itinerary.value.filter(function(i) { return i.dayId === activeDay.value; });
-        const baseOrder = currentDayArr.length > 0 ? Math.max.apply(null, currentDayArr.map(function(i) { return i.order || 0; })) + 1 : 0;
+        const endAccom = itinerary.value.find(function(i) { return i.dayId === activeDay.value && i.id === 'accom-end-' + activeDay.value; });
+        // 如果有當晚住宿終點，插在它前面；否則加在最後
+        let baseOrder;
+        if (endAccom) {
+          baseOrder = (endAccom.order || 0); // 用住宿的 order
+          endAccom.order = baseOrder + 2;   // 住宿往後移2
+          // 其他介於中間的也往後移
+          currentDayArr.forEach(function(i) { if (i.id !== 'accom-end-' + activeDay.value && (i.order || 0) >= baseOrder) i.order = (i.order || 0) + 2; });
+        } else {
+          baseOrder = currentDayArr.length > 0 ? Math.max.apply(null, currentDayArr.map(function(i) { return i.order || 0; })) + 1 : 0;
+        }
         const firstTime = currentDayArr.length === 0 ? (newItinerary.value.time || '09:00') : '';
         // 加入行程
         itinerary.value.push({ id: Date.now(), dayId: activeDay.value, time: firstTime, stayDuration: newItinerary.value.stayDuration || 120, place: placeName, lat: newItinerary.value.lat || null, lng: newItinerary.value.lng || null, city: newItinerary.value.city || '自訂景點', tag: newItinerary.value.tag || 'landmark', placeId: newItinerary.value.placeId || null, weather: null, weatherLoading: false, isEditing: false, travelTime: null, routeKey: '', transportMode: 'driving', order: baseOrder });
@@ -1908,14 +1929,17 @@
       const confirmSchedule = async () => {
         if (isTargetDayEmpty.value && !scheduleModal.value.time) return alert('請輸入第一站的出發時間！');
 
-        let baseOrder = 0;
         const currentDayArr = itinerary.value.filter(function(i) { return i.dayId === scheduleModal.value.dayId; });
-        if (currentDayArr.length > 0) {
-            let maxOrder = 0;
-            for(let i=0; i<currentDayArr.length; i++) {
-                if ((currentDayArr[i].order || 0) > maxOrder) maxOrder = currentDayArr[i].order;
-            }
-            baseOrder = maxOrder + 1;
+        const endAccomSched = itinerary.value.find(function(i) { return i.dayId === scheduleModal.value.dayId && i.id === 'accom-end-' + scheduleModal.value.dayId; });
+        let baseOrder = 0;
+        if (endAccomSched) {
+          baseOrder = (endAccomSched.order || 0);
+          endAccomSched.order = baseOrder + 10;
+          currentDayArr.forEach(function(i) { if (i.id !== 'accom-end-' + scheduleModal.value.dayId && (i.order || 0) >= baseOrder) i.order = (i.order || 0) + 10; });
+        } else if (currentDayArr.length > 0) {
+          let maxOrder = 0;
+          for(let i=0; i<currentDayArr.length; i++) { if ((currentDayArr[i].order || 0) > maxOrder) maxOrder = currentDayArr[i].order; }
+          baseOrder = maxOrder + 1;
         }
 
         if (scheduleModal.value.isBatch) {
