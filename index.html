@@ -1371,14 +1371,26 @@
         }
 
         accommodationModal.value.show = false; accomSuggestions.value = [];
-        saveCurrentTripData();
+        // 直接存（不走 debounce），確保 wishlist 和 itinerary 都即時寫入
+        if (firebaseEnabled.value && user.value && firebaseDb) {
+          if (_saveDebounceTimer) { clearTimeout(_saveDebounceTimer); _saveDebounceTimer = null; }
+          await saveTripToFirestore();
+        } else {
+          saveCurrentTripData();
+        }
         await nextTick();
         await updateRouteTimes();
       };
       const removeAccommodation = async (dayId) => {
         const a = Object.assign({}, accommodations.value); delete a[dayId]; accommodations.value = a;
         itinerary.value = itinerary.value.filter(function(i) { return i.id !== 'accom-end-'+dayId && i.id !== 'accom-start-'+dayId; });
-        saveCurrentTripData(); await nextTick(); await updateRouteTimes();
+        if (firebaseEnabled.value && user.value && firebaseDb) {
+          if (_saveDebounceTimer) { clearTimeout(_saveDebounceTimer); _saveDebounceTimer = null; }
+          await saveTripToFirestore();
+        } else {
+          saveCurrentTripData();
+        }
+        await nextTick(); await updateRouteTimes();
       };
 
       // ── 直接新增 ──
