@@ -297,18 +297,15 @@
     <main class="flex-1 overflow-y-auto no-scrollbar pb-28 bg-[#fafbfc] relative">
       
       <div v-show="activeTab === 'itinerary'" class="animate-fade-in relative">
-        <div class="bg-white border-b border-gray-100 sticky top-0 z-20 shadow-sm">
-          <div class="flex overflow-x-auto no-scrollbar px-4 py-3 space-x-3">
+        <div class="bg-white sticky top-0 z-20 shadow-sm border-b border-gray-100">
+          <div class="flex overflow-x-auto no-scrollbar px-4 pt-3 pb-2 space-x-3">
             <button v-for="day in tripDays" :key="day.id" @click="activeDay = day.id"
                     :class="activeDay === day.id ? 'bg-[#4b8f7e] text-white shadow-md shadow-teal-200' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'"
                     class="flex-shrink-0 px-5 py-2 rounded-full text-sm font-medium tracking-wide transition-all duration-300">
               {{ day.name }}
             </button>
           </div>
-        </div>
-
-        <div class="p-5 space-y-4">
-          <div class="flex justify-between items-center mb-4">
+          <div class="flex justify-between items-center px-5 pb-3">
             <h2 class="text-sm font-bold text-gray-500 tracking-widest">{{ currentDayName }} 行程</h2>
             <div class="flex items-center gap-2">
               <button @click="showAddItinerary = !showAddItinerary; newItinerary.place = ''; newItinerary.lat = null; directAddSuggestions = []" class="text-[#4b8f7e] text-xs flex items-center bg-teal-50 px-3 py-1.5 rounded-full hover:bg-teal-100 transition font-bold shadow-sm border border-teal-100">
@@ -319,6 +316,10 @@
               </button>
             </div>
           </div>
+        </div>
+
+        <div class="p-5 space-y-4">
+          <div>
 
           <!-- 直接新增景點表單 -->
           <transition name="modal">
@@ -410,7 +411,7 @@
                 </div>
                 
                 <div class="flex-1 pb-1 relative">
-                  <div v-if="editingId !== item.id" class="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm relative overflow-hidden flex flex-col">
+                  <div v-if="editingId !== item.id" :class="item.isAccommodation ? 'bg-indigo-50 border-indigo-100' : 'bg-white border-gray-100'" class="p-4 rounded-2xl border shadow-sm relative overflow-hidden flex flex-col">
                     <div v-if="item.lat" class="absolute top-0 right-0 w-2 h-2 bg-[#4b8f7e] rounded-full mt-3 mr-3 shadow-sm"></div>
                     
                     <div class="flex justify-start items-start">
@@ -525,6 +526,7 @@
                 <option value="default">預設 (加入時間)</option>
                 <option value="unscheduled">未排入優先</option>
                 <option value="city">依城市分組</option>
+                <option value="tag">依景點類型</option>
               </select>
               <i class="fa-solid fa-sort absolute right-2.5 top-2 text-teal-600 pointer-events-none text-[10px]"></i>
             </div>
@@ -576,7 +578,8 @@
             <div v-if="group.items.length > 0" class="space-y-3">
               <div v-if="wishlistSortMode !== 'default'" class="flex items-center space-x-2 mb-1 mt-3">
                 <span class="text-[11px] font-black tracking-wider text-gray-600 bg-white border border-gray-200 px-3 py-1 rounded-full shadow-sm flex items-center">
-                  <i v-if="wishlistSortMode === 'city'" class="fa-solid fa-city text-teal-500 mr-1.5"></i>
+                  <i v-if="wishlistSortMode === 'tag' && group.groupIcon" :class="['fa-solid', group.groupIcon, 'text-teal-500 mr-1.5']"></i>
+                  <i v-else-if="wishlistSortMode === 'city'" class="fa-solid fa-city text-teal-500 mr-1.5"></i>
                   <i v-else-if="group.groupName === '未排入行程'" class="fa-solid fa-heart text-rose-400 mr-1.5"></i>
                   <i v-else class="fa-solid fa-calendar-check text-teal-500 mr-1.5"></i>
                   {{ group.groupName }}
@@ -1325,13 +1328,99 @@
         }, 300);
       };
       const selectAccomPlace = (place) => { accommodationModal.value.place = place.name; accommodationModal.value.lat = place.lat; accommodationModal.value.lng = place.lng; accommodationModal.value.city = place.city; accommodationModal.value.placeId = place.placeId || null; accomSuggestions.value = []; };
-      const saveAccommodation = () => {
+      const ACCOM_TAG = 'accommodation';
+
+      // 住宿 item 的唯一 id 規則: 'accom-{dayId}-end' 當晚終點, 'accom-{dayId}-start' 前晚起點(存在 dayId+1)
+      const accomEndId = (dayId) => 'accom-' + dayId + '-end';
+      const accomStartId = (dayId) => 'accom-' + dayId + '-start'; // 這個 item 放在 dayId+1 行程裡
+
+      const upsertAccomItinerary = (accomData, dayId) => {
+        const totalDays = tripDays.value.length;
+
+        // ── 當晚：放在 dayId 行程的最後 ──
+        const endId = accomEndId(dayId);
+        const sameDayItems = itinerary.value.filter(function(i) { return i.dayId === dayId && i.id !== endId; });
+        const maxOrder = sameDayItems.length > 0 ? Math.max.apply(null, sameDayItems.map(function(i) { return i.order || 0; })) + 1 : 0;
+        const endIdx = itinerary.value.findIndex(function(i) { return i.id === endId; });
+        const endItem = {
+          id: endId, dayId: dayId, time: '', stayDuration: 0,
+          place: accomData.place, lat: accomData.lat || null, lng: accomData.lng || null,
+          city: accomData.city || '', tag: ACCOM_TAG, placeId: accomData.placeId || null,
+          isAccommodation: true, accommodationDayId: dayId,
+          weather: null, weatherLoading: false, isEditing: false,
+          travelTime: null, routeKey: '', transportMode: 'driving', order: maxOrder
+        };
+        if (endIdx >= 0) {
+          // 更新但保留 order（可能被使用者調整過）
+          const existing = itinerary.value[endIdx];
+          itinerary.value[endIdx] = Object.assign({}, existing, { place: accomData.place, lat: accomData.lat || null, lng: accomData.lng || null, city: accomData.city || '', placeId: accomData.placeId || null, routeKey: '' });
+        } else {
+          itinerary.value.push(endItem);
+        }
+
+        // ── 前晚（起點）：放在 dayId+1 行程的第一位 ──
+        if (dayId < totalDays) {
+          const startId = accomStartId(dayId);
+          // 把 dayId+1 的其他項目 order 確保 >= 1
+          itinerary.value.forEach(function(i) { if (i.dayId === dayId + 1 && i.id !== startId && (i.order || 0) < 1) i.order = 1; });
+          const startIdx = itinerary.value.findIndex(function(i) { return i.id === startId; });
+          const startItem = {
+            id: startId, dayId: dayId + 1, time: '', stayDuration: 0,
+            place: accomData.place, lat: accomData.lat || null, lng: accomData.lng || null,
+            city: accomData.city || '', tag: ACCOM_TAG, placeId: accomData.placeId || null,
+            isAccommodation: true, accommodationDayId: dayId,
+            weather: null, weatherLoading: false, isEditing: false,
+            travelTime: null, routeKey: '', transportMode: 'driving', order: 0
+          };
+          if (startIdx >= 0) {
+            itinerary.value[startIdx] = Object.assign({}, itinerary.value[startIdx], { place: accomData.place, lat: accomData.lat || null, lng: accomData.lng || null, city: accomData.city || '', placeId: accomData.placeId || null, routeKey: '' });
+          } else {
+            // 推入並確保排序正確
+            itinerary.value.push(startItem);
+          }
+        }
+      };
+
+      const saveAccommodation = async () => {
         if (!accommodationModal.value.place.trim()) return alert('請輸入住宿名稱！');
         const dayId = accommodationModal.value.dayId;
-        accommodations.value = Object.assign({}, accommodations.value, { [dayId]: { place: accommodationModal.value.place.trim(), lat: accommodationModal.value.lat, lng: accommodationModal.value.lng, city: accommodationModal.value.city, placeId: accommodationModal.value.placeId || null } });
-        accommodationModal.value.show = false; accomSuggestions.value = []; saveCurrentTripData();
+        const accomData = {
+          place: accommodationModal.value.place.trim(),
+          lat: accommodationModal.value.lat, lng: accommodationModal.value.lng,
+          city: accommodationModal.value.city, placeId: accommodationModal.value.placeId || null
+        };
+
+        // 儲存住宿資料
+        accommodations.value = Object.assign({}, accommodations.value, { [dayId]: accomData });
+
+        // 需求5：加入景點庫
+        const inWL = wishlist.value.some(function(w) { return (accomData.placeId && w.placeId === accomData.placeId) || w.place === accomData.place; });
+        if (!inWL) {
+          wishlist.value.unshift({ id: 'wl-accom-' + dayId, place: accomData.place, lat: accomData.lat || null, lng: accomData.lng || null, city: accomData.city || '', tag: ACCOM_TAG, placeId: accomData.placeId || null, weather: null, weatherLoading: false });
+        }
+
+        // 需求4：加入行程（當晚終點 + 隔天起點）
+        upsertAccomItinerary(accomData, dayId);
+
+        accommodationModal.value.show = false; accomSuggestions.value = [];
+        saveCurrentTripData();
+        // 需求6：計算交通時間
+        await nextTick();
+        await updateRouteTimes();
       };
-      const removeAccommodation = (dayId) => { const newAcc = Object.assign({}, accommodations.value); delete newAcc[dayId]; accommodations.value = newAcc; saveCurrentTripData(); };
+
+      const removeAccommodation = async (dayId) => {
+        const newAcc = Object.assign({}, accommodations.value);
+        delete newAcc[dayId];
+        accommodations.value = newAcc;
+        // 移除行程中的住宿站點
+        const endId = accomEndId(dayId);
+        const startId = accomStartId(dayId);
+        itinerary.value = itinerary.value.filter(function(i) { return i.id !== endId && i.id !== startId; });
+        saveCurrentTripData();
+        await nextTick();
+        await updateRouteTimes();
+      };
 
       // ── 直接新增 ──
       const handleDirectAddSearch = (e) => {
@@ -1523,7 +1612,7 @@
         try {
           let latitude = itemRef.lat; let longitude = itemRef.lng;
           if (!latitude || !longitude) {
-            const geoRes = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(place) + '&limit=1&addressdetails=1&accept-language=zh-TW,en');
+            const geoRes = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(place) + '&limit=1&addressdetails=1&accept-language=en');
             const geoData = await geoRes.json();
             if (geoData.length === 0) { itemRef.weatherLoading = false; return; }
             latitude = parseFloat(geoData[0].lat); longitude = parseFloat(geoData[0].lon);
@@ -1548,7 +1637,7 @@
         if (!query || !query.trim()) { callback([]); return; }
         if (typeof google === 'undefined' || !google.maps || !google.maps.places) {
           // Google 未載入時 fallback Nominatim
-          fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(query) + '&limit=5&addressdetails=1&accept-language=zh-TW,en')
+          fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(query) + '&limit=5&addressdetails=1&accept-language=en')
             .then(function(r) { return r.json(); })
             .then(function(data) {
               callback(data.map(function(item) {
@@ -1559,14 +1648,14 @@
           return;
         }
         const svc = new google.maps.places.AutocompleteService();
-        svc.getPlacePredictions({ input: query, language: 'zh-TW' }, function(predictions, status) {
+        svc.getPlacePredictions({ input: query, language: 'en' }, function(predictions, status) {
           if (status !== google.maps.places.PlacesServiceStatus.OK || !predictions) { callback([]); return; }
           const detailSvc = new google.maps.places.PlacesService(document.createElement('div'));
           const results = [];
           let pending = predictions.slice(0, 5).length;
           if (pending === 0) { callback([]); return; }
           predictions.slice(0, 5).forEach(function(pred) {
-            detailSvc.getDetails({ placeId: pred.place_id, fields: ['name', 'geometry', 'formatted_address', 'address_components', 'types'] }, function(place, st) {
+            detailSvc.getDetails({ placeId: pred.place_id, fields: ['name', 'geometry', 'formatted_address', 'address_components', 'types'], language: 'en' }, function(place, st) {
               if (st === google.maps.places.PlacesServiceStatus.OK && place && place.geometry) {
                 const comps = place.address_components || [];
                 const cityComp = comps.find(function(a) { return a.types.indexOf('locality') !== -1 || a.types.indexOf('administrative_area_level_1') !== -1; });
@@ -1767,6 +1856,15 @@
           const groups = {};
           wishlist.value.forEach(function(item) { const cityName = item.city || '其他地區'; if (!groups[cityName]) groups[cityName] = []; groups[cityName].push(item); });
           return Object.keys(groups).sort().map(function(city) { return { groupName: city, items: groups[city] }; });
+        }
+        else if (wishlistSortMode.value === 'tag') {
+          const groups = {};
+          wishlist.value.forEach(function(item) {
+            const tagInfo = availableTags.find(function(t) { return t.id === (item.tag || 'landmark'); }) || availableTags[0];
+            if (!groups[tagInfo.id]) groups[tagInfo.id] = { name: tagInfo.name, icon: tagInfo.icon, items: [] };
+            groups[tagInfo.id].items.push(item);
+          });
+          return availableTags.filter(function(t) { return groups[t.id]; }).map(function(t) { return { groupName: t.name, groupIcon: t.icon, items: groups[t.id].items }; });
         }
         return [];
       });
