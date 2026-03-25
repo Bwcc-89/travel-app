@@ -998,7 +998,6 @@
         if (items.length > 0) {
           const firstId = currentTripId.value && items.some(function(t){ return t.id === currentTripId.value; })
             ? currentTripId.value : items[0].id;
-          // loadTripData 內部已有 _loadingTripData 保護，確保載入期間不會誤存
           await loadTripData(firstId);
           hasSavedConfig.value = true;
         }
@@ -1012,12 +1011,9 @@
         if (!firebaseDb || !user.value || !currentTripId.value) return;
         const id = currentTripId.value;
         const tripRef = firebaseDb.collection('trips').doc(id);
-        if (_isSaving) return; // 防止重複存檔
-        _isSaving = true;
         try {
-          // 先確認這個行程是否存在，決定是否要設 ownerUid
-          const existingDoc = await tripRef.get();
-          const payload = {
+          await tripRef.set({
+            ownerUid: user.value.uid,
             data: {
               config: tripConfig.value,
               days: tripDays.value,
@@ -1028,14 +1024,7 @@
               accommodations: accommodations.value
             },
             updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-          };
-          if (!existingDoc.exists) {
-            // 新行程：設定擁有者
-            payload.ownerUid = user.value.uid;
-            payload.sharedWith = [];
-          }
-          // 共編者只能更新 data，不能改 ownerUid 或 sharedWith
-          await tripRef.set(payload, { merge: true });
+          }, { merge: true });
           // 寫入計數（每天重置），接近免費額度上限時警告
           const now = Date.now();
           if (now - firestoreWriteCount.lastReset > 86400000) {
@@ -1047,7 +1036,6 @@
             console.warn('[用量警告] 今日 Firestore 寫入已達', firestoreWriteCount.count, '次，接近免費額度');
           }
         } catch (e) {
-          _isSaving = false;
           if (e.code === 'resource-exhausted' || (e.message && e.message.includes('quota'))) {
             console.error('[用量超限] Firestore 免費額度已用完，資料暫時無法儲存');
             // 顯示提示（不阻斷使用者操作）
@@ -1058,8 +1046,6 @@
           } else {
             throw e;
           }
-        } finally {
-          _isSaving = false;
         }
       };
 
@@ -1069,6 +1055,8 @@
         if (!snap.exists) return false;
         const d = snap.data();
         if (d.ownerUid !== user.value.uid && (!d.sharedWith || d.sharedWith.indexOf(user.value.uid) === -1)) return false;
+        // 確保整個賦值過程都在 _loadingTripData 保護下
+        _loadingTripData = true;
         const data = d.data || {};
         tripConfig.value = data.config || { destination: '', startDate: today, days: 5, eurRate: 34.5, localCurrency: 'EUR' };
         tripDays.value = data.days || [];
@@ -1087,6 +1075,10 @@
           membersInput.value = members.value.join(', ');
         }
         accommodations.value = data.accommodations || {};
+        // 等所有 watch 排隊執行完再清 flag
+        await nextTick();
+        await nextTick(); // 雙 nextTick 確保 deep watch 也執行完
+        _loadingTripData = false;
         return true;
       };
 
@@ -1289,14 +1281,12 @@
       const makeKey = (id, suffix) => 'travelTrip_' + id + '_' + suffix;
 
       let _loadingTripData = false;
-      let _isSaving = false; // 防止存檔期間 watch 再次觸發
       const loadTripData = async (id) => {
         _loadingTripData = true;
         currentTripId.value = id;
         if (firebaseEnabled.value && user.value && firebaseDb) {
           const ok = await loadTripFromFirestore(id);
-          await nextTick(); // 等 watch 執行完再清 flag，防止 members 修改觸發誤存
-          _loadingTripData = false;
+          // loadTripFromFirestore 內部已自行管理 _loadingTripData flag
           if (ok) return;
         }
         try {
@@ -1318,6 +1308,8 @@
           const acc = localStorage.getItem(makeKey(id, 'accommodations'));
           accommodations.value = acc ? JSON.parse(acc) : {};
         } catch (e) {}
+        await nextTick();
+        await nextTick();
         _loadingTripData = false;
       };
 
@@ -1325,7 +1317,6 @@
       const saveCurrentTripData = () => {
         if (!currentTripId.value) return;
         if (_loadingTripData) return;
-        if (_isSaving) return; // 存檔進行中，跳過（避免共編衝突）
         if (firebaseEnabled.value && user.value && firebaseDb) {
           if (_saveDebounceTimer) clearTimeout(_saveDebounceTimer);
           _saveDebounceTimer = setTimeout(saveTripToFirestore, 1500);
@@ -2431,9 +2422,9 @@
       watch(activeDay, async () => { editingId.value = null; await updateRouteTimes(); nextTick(initSortable); if (activeTab.value === 'map') nextTick(renderMapMarkers); });
       watch(timelineItinerary, () => { nextTick(initSortable); });
 
-      watch(itinerary, function() { if (currentTripId.value) saveCurrentTripData(); }, { deep: true });
-      watch(wishlist, function() { if (currentTripId.value) saveCurrentTripData(); }, { deep: true });
-      watch(expenses, function() { if (currentTripId.value) saveCurrentTripData(); }, { deep: true });
+      watch(itinerary, function() { if (currentTripId.value && !_loadingTripData) saveCurrentTripData(); }, { deep: true });
+      watch(wishlist, function() { if (currentTripId.value && !_loadingTripData) saveCurrentTripData(); }, { deep: true });
+      watch(expenses, function() { if (currentTripId.value && !_loadingTripData) saveCurrentTripData(); }, { deep: true });
       watch(membersInput, function() { if (currentTripId.value && !_loadingTripData) saveCurrentTripData(); });
 
       onMounted(function() {
