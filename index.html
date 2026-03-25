@@ -940,7 +940,18 @@
         const email = (shareModal.value.email || '').trim().toLowerCase();
         if (!email) { shareModal.value.message = '請輸入 Email'; shareModal.value.error = true; return; }
         try {
-          await saveTripToFirestore();
+          // 確保行程已存入 Firestore（繞過 _isSaving flag，強制存檔）
+          const savedOk = await (async () => {
+            if (!firebaseDb || !user.value || !currentTripId.value) return false;
+            const ref = firebaseDb.collection('trips').doc(currentTripId.value);
+            // 只更新 data，不動 ownerUid/sharedWith
+            await ref.set({
+              data: { config: tripConfig.value, days: tripDays.value, itinerary: itinerary.value, wishlist: wishlist.value, expenses: expenses.value, members: membersInput.value, accommodations: accommodations.value },
+              updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+            return true;
+          })();
+          if (!savedOk) { shareModal.value.message = '無法儲存行程，請稍後再試'; shareModal.value.error = true; return; }
           const emailDoc = await firebaseDb.collection('userEmails').doc(email).get();
           if (!emailDoc.exists) {
             shareModal.value.message = '找不到此 Email 的帳號，請對方先註冊本 App'; shareModal.value.error = true; return;
@@ -961,6 +972,8 @@
             var updated = Object.assign({}, tripList.value.items[sIdx], { isShared: true });
             tripList.value.items.splice(sIdx, 1, updated);
           }
+          // 同步更新 tripList 的 sharedWith 資訊（確保 isShared 正確）
+          await refreshTripList();
           shareModal.value.message = '已送出邀請！對方登入後即可在「我的旅程」看到此行程'; shareModal.value.error = false;
           shareModal.value.email = '';
         } catch (e) {
@@ -994,6 +1007,7 @@
         shared.docs.forEach(function(d) {
           if (seen[d.id]) return;
           const dta = d.data();
+          if (dta.deletedAt) return; // 軟刪除的行程不顯示
           items.push({ id: d.id, destination: (dta.data && dta.data.config && dta.data.config.destination) || '', startDate: (dta.data && dta.data.config && dta.data.config.startDate) || '', days: (dta.data && dta.data.config && dta.data.config.days) || 5, ownerUid: dta.ownerUid, isShared: true });
         });
         tripList.value.items = items;
@@ -1016,9 +1030,9 @@
         if (_isSaving) return;
         _isSaving = true;
         try {
-          // 先確認行程是否存在，只有建立新行程時才設 ownerUid
-          const existingDoc = await tripRef.get();
-          const payload = {
+          // 只更新 data，完全不碰 ownerUid 和 sharedWith
+          // ownerUid 只在 startPlanning 建立行程時設定，這裡永遠不動它
+          await tripRef.set({
             data: {
               config: tripConfig.value,
               days: tripDays.value,
@@ -1029,13 +1043,7 @@
               accommodations: accommodations.value
             },
             updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-          };
-          if (!existingDoc.exists) {
-            // 新行程才設 ownerUid，避免共編者存檔時把 ownerUid 改成自己
-            payload.ownerUid = user.value.uid;
-            payload.sharedWith = [];
-          }
-          await tripRef.set(payload, { merge: true });
+          }, { merge: true });
           // 寫入計數（每天重置），接近免費額度上限時警告
           const now = Date.now();
           if (now - firestoreWriteCount.lastReset > 86400000) {
@@ -1280,6 +1288,7 @@
       // 監聽目的地變更，自動偵測幣別並抓取即時匯率
       watch(() => tripConfig.value.destination, async function(newDest) {
         if (!newDest || !newDest.trim()) return;
+        if (_loadingTripData) return; // 載入期間不自動改幣別
         const detected = detectCurrency(newDest);
         if (detected !== tripConfig.value.localCurrency) {
           tripConfig.value.localCurrency = detected;
@@ -1300,9 +1309,14 @@
         _loadingTripData = true;
         currentTripId.value = id;
         if (firebaseEnabled.value && user.value && firebaseDb) {
-          const ok = await loadTripFromFirestore(id);
-          // loadTripFromFirestore 內部已自行管理 _loadingTripData flag
-          if (ok) return;
+          try {
+            const ok = await loadTripFromFirestore(id);
+            // loadTripFromFirestore 內部已自行管理 _loadingTripData flag
+            if (ok) return;
+          } catch(e) {
+            console.error('loadTripFromFirestore error:', e);
+            _loadingTripData = false; // 確保異常時 flag 被清掉
+          }
         }
         try {
           const cfg = localStorage.getItem(makeKey(id, 'config'));
@@ -1584,7 +1598,17 @@
         if (idx === -1) tripList.value.items.push(summary);
         else tripList.value.items[idx] = summary;
         if (!FIREBASE_ENABLED || !user.value) localStorage.setItem('travelTrip_index', JSON.stringify(tripList.value.items));
-        saveCurrentTripData();
+        // 建立新行程時初始化 ownerUid（只在 Firebase 模式且是新行程時）
+        if (firebaseEnabled.value && user.value && firebaseDb && !existing) {
+          firebaseDb.collection('trips').doc(currentTripId.value).set({
+            ownerUid: user.value.uid,
+            sharedWith: [],
+            data: { config: tripConfig.value, days: tripDays.value, itinerary: itinerary.value, wishlist: wishlist.value, expenses: expenses.value, members: membersInput.value, accommodations: accommodations.value },
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          }, { merge: true }).catch(function(e) { console.error('建立行程失敗', e); });
+        } else {
+          saveCurrentTripData();
+        }
         appState.value = 'main';
         hasSavedConfig.value = true;
       };
@@ -1601,7 +1625,15 @@
       };
 
       const switchTrip = async (id) => {
-        if (currentTripId.value && currentTripId.value !== id) saveCurrentTripData();
+        if (currentTripId.value && currentTripId.value !== id) {
+          // 切換前立即存檔，清掉 debounce timer，直接等存完再切換
+          if (_saveDebounceTimer) { clearTimeout(_saveDebounceTimer); _saveDebounceTimer = null; }
+          if (firebaseEnabled.value && user.value && firebaseDb && !_isSaving) {
+            await saveTripToFirestore();
+          } else {
+            saveCurrentTripData();
+          }
+        }
         await loadTripData(id);
         tripList.value.show = false;
         appState.value = 'main';
