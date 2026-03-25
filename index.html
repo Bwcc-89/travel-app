@@ -987,7 +987,9 @@
           const dta = d.data();
           if (dta.deletedAt) return;
           seen[d.id] = true;
-          items.push({ id: d.id, destination: (dta.data && dta.data.config && dta.data.config.destination) || '', startDate: (dta.data && dta.data.config && dta.data.config.startDate) || '', days: (dta.data && dta.data.config && dta.data.config.days) || 5, ownerUid: dta.ownerUid });
+          // 主編行程：如果有共編者就標記 isShared
+          const hasCollabs = dta.sharedWith && dta.sharedWith.length > 0;
+          items.push({ id: d.id, destination: (dta.data && dta.data.config && dta.data.config.destination) || '', startDate: (dta.data && dta.data.config && dta.data.config.startDate) || '', days: (dta.data && dta.data.config && dta.data.config.days) || 5, ownerUid: dta.ownerUid, isShared: hasCollabs });
         });
         shared.docs.forEach(function(d) {
           if (seen[d.id]) return;
@@ -1011,9 +1013,12 @@
         if (!firebaseDb || !user.value || !currentTripId.value) return;
         const id = currentTripId.value;
         const tripRef = firebaseDb.collection('trips').doc(id);
+        if (_isSaving) return;
+        _isSaving = true;
         try {
-          await tripRef.set({
-            ownerUid: user.value.uid,
+          // 先確認行程是否存在，只有建立新行程時才設 ownerUid
+          const existingDoc = await tripRef.get();
+          const payload = {
             data: {
               config: tripConfig.value,
               days: tripDays.value,
@@ -1024,7 +1029,13 @@
               accommodations: accommodations.value
             },
             updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-          }, { merge: true });
+          };
+          if (!existingDoc.exists) {
+            // 新行程才設 ownerUid，避免共編者存檔時把 ownerUid 改成自己
+            payload.ownerUid = user.value.uid;
+            payload.sharedWith = [];
+          }
+          await tripRef.set(payload, { merge: true });
           // 寫入計數（每天重置），接近免費額度上限時警告
           const now = Date.now();
           if (now - firestoreWriteCount.lastReset > 86400000) {
@@ -1036,6 +1047,7 @@
             console.warn('[用量警告] 今日 Firestore 寫入已達', firestoreWriteCount.count, '次，接近免費額度');
           }
         } catch (e) {
+          _isSaving = false;
           if (e.code === 'resource-exhausted' || (e.message && e.message.includes('quota'))) {
             console.error('[用量超限] Firestore 免費額度已用完，資料暫時無法儲存');
             // 顯示提示（不阻斷使用者操作）
@@ -1046,6 +1058,8 @@
           } else {
             throw e;
           }
+        } finally {
+          _isSaving = false;
         }
       };
 
@@ -1281,6 +1295,7 @@
       const makeKey = (id, suffix) => 'travelTrip_' + id + '_' + suffix;
 
       let _loadingTripData = false;
+      let _isSaving = false;
       const loadTripData = async (id) => {
         _loadingTripData = true;
         currentTripId.value = id;
@@ -2049,7 +2064,7 @@
           }
           runningTime = addMinutes(runningTime, (parseInt(prev.stayDuration) || 0) + (curr.travelTime || 0));
         }
-        if (hasUpdates && currentTripId.value) saveCurrentTripData();
+        if (hasUpdates && currentTripId.value && !_loadingTripData) saveCurrentTripData();
       };
 
       const toggleTransport = async (item) => {
@@ -2419,7 +2434,7 @@
         if (newTab === 'map') nextTick(() => { if (!map) initMap(); map.invalidateSize(); renderMapMarkers(); }); 
         if (newTab === 'itinerary') nextTick(initSortable);
       });
-      watch(activeDay, async () => { editingId.value = null; await updateRouteTimes(); nextTick(initSortable); if (activeTab.value === 'map') nextTick(renderMapMarkers); });
+      watch(activeDay, async () => { editingId.value = null; if (!_loadingTripData) await updateRouteTimes(); nextTick(initSortable); if (activeTab.value === 'map') nextTick(renderMapMarkers); });
       watch(timelineItinerary, () => { nextTick(initSortable); });
 
       watch(itinerary, function() { if (currentTripId.value && !_loadingTripData) saveCurrentTripData(); }, { deep: true });
@@ -2452,7 +2467,10 @@
         } else if (firebaseEnabled.value) {
           authLoading.value = false;
         }
-        updateRouteTimes();
+        // updateRouteTimes 只在非 Firebase 模式下呼叫（Firebase 模式由 loadTripData 觸發）
+        if (!FIREBASE_ENABLED) {
+          updateRouteTimes();
+        }
         nextTick(initSortable);
       });
 
