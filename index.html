@@ -315,7 +315,7 @@
                 {{ trip.startDate }} ・ {{ trip.days }} 天
               </div>
             </div>
-            <button v-if="!firebaseEnabled || !trip.ownerUid || trip.ownerUid === user?.uid" @click.stop="deleteTrip(trip.id)"
+            <button v-if="!firebaseEnabled || (trip.ownerUid && trip.ownerUid === user?.uid) || (!trip.ownerUid && !firebaseEnabled)" @click.stop="deleteTrip(trip.id)"
                     class="text-gray-300 hover:text-red-400 flex-shrink-0 ml-2">
               <i class="fa-solid fa-trash"></i>
             </button>
@@ -1038,17 +1038,19 @@
         try {
           // 只更新 data，完全不碰 ownerUid 和 sharedWith
           // ownerUid 只在 startPlanning 建立行程時設定，這裡永遠不動它
-          // 版本衝突檢查：如果 Firestore 的資料比本地新，拒絕覆蓋
-          const currentDoc = await tripRef.get();
-          if (currentDoc.exists) {
-            const serverUpdatedAt = currentDoc.data().updatedAt;
-            const serverVersion = currentDoc.data().version || 0;
-            // 如果 server version 大於本地 version，表示有人在我們之後存過
-            if (serverVersion > (_localVersion || 0) && _localVersion !== null) {
-              console.warn('[衝突] 伺服器資料較新，跳過本次存檔，version:', serverVersion, '>', _localVersion);
-              // 重新載入最新資料
-              await loadTripFromFirestore(id);
-              return;
+          // 版本衝突檢查（每30秒最多一次，節省 Firestore 讀取）
+          const now2 = Date.now();
+          if (_localVersion !== null && (now2 - (_lastVersionCheck || 0)) > 30000) {
+            _lastVersionCheck = now2;
+            const currentDoc = await tripRef.get();
+            if (currentDoc.exists) {
+              const serverVersion = currentDoc.data().version || 0;
+              if (serverVersion > _localVersion) {
+                console.warn('[衝突] 伺服器資料較新 v' + serverVersion + ' > 本地 v' + _localVersion + '，重新載入');
+                _isSaving = false;
+                await loadTripFromFirestore(id);
+                return;
+              }
             }
           }
           const newVersion = (_localVersion || 0) + 1;
@@ -1121,6 +1123,7 @@
         accommodations.value = data.accommodations || {};
         // 同步本地版本號
         _localVersion = snap.data().version || 0;
+        _lastVersionCheck = Date.now();
         // 等所有 watch 排隊執行完再清 flag
         await nextTick();
         await nextTick(); // 雙 nextTick 確保 deep watch 也執行完
@@ -1330,6 +1333,7 @@
       let _loadingTripData = false;
       let _isSaving = false;
       let _localVersion = null; // 本地版本號，防止舊資料覆蓋新資料
+      let _lastVersionCheck = 0; // 上次版本檢查時間
       const loadTripData = async (id) => {
         _loadingTripData = true;
         currentTripId.value = id;
@@ -1639,11 +1643,17 @@
       };
 
       const createNewTrip = () => {
-        tripConfig.value = { destination: '', startDate: today, days: 5, eurRate: tripConfig.value.eurRate || 34.5 };
-        tripDays.value = []; itinerary.value = []; wishlist.value = []; expenses.value = [];
+        // 完整清除所有舊資料
+        tripConfig.value = { destination: '', startDate: today, days: 5, eurRate: 34.5, localCurrency: 'EUR' };
+        tripDays.value = [];
+        itinerary.value = [];
+        wishlist.value = [];
+        expenses.value = [];
+        accommodations.value = {};
         membersInput.value = '旅伴1, 旅伴2';
-        members.value = membersInput.value.split(',').map(function(m){ return m.trim(); }).filter(function(m){ return m; });
+        members.value = ['旅伴1', '旅伴2'];
         currentTripId.value = null;
+        _localVersion = null;
         tripList.value.show = false;
         hasSavedConfig.value = false;
         appState.value = 'setup';
@@ -1672,13 +1682,19 @@
             if (snap.exists) {
               const d = snap.data();
               if (d.ownerUid === user.value.uid) {
-                await firebaseDb.collection('trips').doc(id).update({ deletedAt: firebase.firestore.FieldValue.serverTimestamp(), deletedBy: user.value.uid });
-              } else if (d.sharedWith && d.sharedWith.indexOf(user.value.uid) !== -1) {
-                const newShared = d.sharedWith.filter(function(u) { return u !== user.value.uid; });
+                // 主編：軟刪除（標記 deletedAt，不影響資料）
+                await firebaseDb.collection('trips').doc(id).update({
+                  deletedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                  deletedBy: user.value.uid
+                });
+              } else {
+                // 共編者：無論如何只把自己從 sharedWith 移除
+                const currentShared = d.sharedWith || [];
+                const newShared = currentShared.filter(function(u) { return u !== user.value.uid; });
                 await firebaseDb.collection('trips').doc(id).update({ sharedWith: newShared });
               }
             }
-          } catch(e) {}
+          } catch(e) { console.error('deleteTrip error:', e); }
         }
         ['config', 'days', 'itinerary', 'wishlist', 'expenses', 'members'].forEach(function(s) { localStorage.removeItem(makeKey(id, s)); });
         tripList.value.items = tripList.value.items.filter(function(t) { return t.id !== id; });
@@ -1687,9 +1703,13 @@
           if (tripList.value.items.length > 0) loadTripData(tripList.value.items[0].id);
           else {
             currentTripId.value = null;
+            _localVersion = null;
             hasSavedConfig.value = false;
-            tripConfig.value = { destination: '', startDate: today, days: 5, eurRate: tripConfig.value.eurRate || 34.5 };
+            tripConfig.value = { destination: '', startDate: today, days: 5, eurRate: 34.5, localCurrency: 'EUR' };
             tripDays.value = []; itinerary.value = []; wishlist.value = []; expenses.value = [];
+            accommodations.value = {};
+            membersInput.value = '旅伴1, 旅伴2';
+            members.value = ['旅伴1', '旅伴2'];
             nextTick(function(){ tripList.value.show = true; });
           }
         }
