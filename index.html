@@ -944,11 +944,17 @@
           const savedOk = await (async () => {
             if (!firebaseDb || !user.value || !currentTripId.value) return false;
             const ref = firebaseDb.collection('trips').doc(currentTripId.value);
-            // 只更新 data，不動 ownerUid/sharedWith
-            await ref.set({
+            // 確保 ownerUid 存在（用 merge 不覆蓋已有的）
+            const tripSnap2 = await ref.get();
+            const savePayload = {
               data: { config: tripConfig.value, days: tripDays.value, itinerary: itinerary.value, wishlist: wishlist.value, expenses: expenses.value, members: membersInput.value, accommodations: accommodations.value },
               updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-            }, { merge: true });
+            };
+            if (!tripSnap2.exists || !tripSnap2.data().ownerUid) {
+              savePayload.ownerUid = user.value.uid;
+              savePayload.sharedWith = tripSnap2.exists ? (tripSnap2.data().sharedWith || []) : [];
+            }
+            await ref.set(savePayload, { merge: true });
             return true;
           })();
           if (!savedOk) { shareModal.value.message = '無法儲存行程，請稍後再試'; shareModal.value.error = true; return; }
@@ -1032,6 +1038,20 @@
         try {
           // 只更新 data，完全不碰 ownerUid 和 sharedWith
           // ownerUid 只在 startPlanning 建立行程時設定，這裡永遠不動它
+          // 版本衝突檢查：如果 Firestore 的資料比本地新，拒絕覆蓋
+          const currentDoc = await tripRef.get();
+          if (currentDoc.exists) {
+            const serverUpdatedAt = currentDoc.data().updatedAt;
+            const serverVersion = currentDoc.data().version || 0;
+            // 如果 server version 大於本地 version，表示有人在我們之後存過
+            if (serverVersion > (_localVersion || 0) && _localVersion !== null) {
+              console.warn('[衝突] 伺服器資料較新，跳過本次存檔，version:', serverVersion, '>', _localVersion);
+              // 重新載入最新資料
+              await loadTripFromFirestore(id);
+              return;
+            }
+          }
+          const newVersion = (_localVersion || 0) + 1;
           await tripRef.set({
             data: {
               config: tripConfig.value,
@@ -1042,8 +1062,10 @@
               members: membersInput.value,
               accommodations: accommodations.value
             },
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            version: newVersion
           }, { merge: true });
+          _localVersion = newVersion;
           // 寫入計數（每天重置），接近免費額度上限時警告
           const now = Date.now();
           if (now - firestoreWriteCount.lastReset > 86400000) {
@@ -1097,6 +1119,8 @@
           membersInput.value = members.value.join(', ');
         }
         accommodations.value = data.accommodations || {};
+        // 同步本地版本號
+        _localVersion = snap.data().version || 0;
         // 等所有 watch 排隊執行完再清 flag
         await nextTick();
         await nextTick(); // 雙 nextTick 確保 deep watch 也執行完
@@ -1305,6 +1329,7 @@
 
       let _loadingTripData = false;
       let _isSaving = false;
+      let _localVersion = null; // 本地版本號，防止舊資料覆蓋新資料
       const loadTripData = async (id) => {
         _loadingTripData = true;
         currentTripId.value = id;
@@ -1579,7 +1604,7 @@
         return start.toLocaleDateString() + ' - ' + end.toLocaleDateString();
       });
 
-      const startPlanning = () => {
+      const startPlanning = async () => {
         if (!tripConfig.value.startDate || !tripConfig.value.days || tripConfig.value.days < 1) return alert('請填寫正確的日期與天數！');
         let generatedDays = [];
         let startDateObj = new Date(tripConfig.value.startDate);
@@ -1600,12 +1625,12 @@
         if (!FIREBASE_ENABLED || !user.value) localStorage.setItem('travelTrip_index', JSON.stringify(tripList.value.items));
         // 建立新行程時初始化 ownerUid（只在 Firebase 模式且是新行程時）
         if (firebaseEnabled.value && user.value && firebaseDb && !existing) {
-          firebaseDb.collection('trips').doc(currentTripId.value).set({
+          await firebaseDb.collection('trips').doc(currentTripId.value).set({
             ownerUid: user.value.uid,
             sharedWith: [],
             data: { config: tripConfig.value, days: tripDays.value, itinerary: itinerary.value, wishlist: wishlist.value, expenses: expenses.value, members: membersInput.value, accommodations: accommodations.value },
             updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-          }, { merge: true }).catch(function(e) { console.error('建立行程失敗', e); });
+          }, { merge: true });
         } else {
           saveCurrentTripData();
         }
