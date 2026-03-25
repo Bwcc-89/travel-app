@@ -919,6 +919,7 @@
 
       const doSignOut = () => {
         if (_saveDebounceTimer) { clearTimeout(_saveDebounceTimer); _saveDebounceTimer = null; }
+        if (_unsubscribeSnapshot) { _unsubscribeSnapshot(); _unsubscribeSnapshot = null; }
         tripList.value.items = []; currentTripId.value = null;
         tripConfig.value = { destination: '', startDate: today, days: 5, eurRate: 34.5, localCurrency: 'EUR' };
         tripDays.value = []; itinerary.value = []; wishlist.value = []; expenses.value = []; accommodations.value = {};
@@ -1038,21 +1039,7 @@
         try {
           // 只更新 data，完全不碰 ownerUid 和 sharedWith
           // ownerUid 只在 startPlanning 建立行程時設定，這裡永遠不動它
-          // 版本衝突檢查（每30秒最多一次，節省 Firestore 讀取）
-          const now2 = Date.now();
-          if (_localVersion !== null && (now2 - (_lastVersionCheck || 0)) > 30000) {
-            _lastVersionCheck = now2;
-            const currentDoc = await tripRef.get();
-            if (currentDoc.exists) {
-              const serverVersion = currentDoc.data().version || 0;
-              if (serverVersion > _localVersion) {
-                console.warn('[衝突] 伺服器資料較新 v' + serverVersion + ' > 本地 v' + _localVersion + '，重新載入');
-                _isSaving = false;
-                await loadTripFromFirestore(id);
-                return;
-              }
-            }
-          }
+          // 版本號遞增（onSnapshot 負責偵測衝突並即時更新，這裡不再做額外 get）
           const newVersion = (_localVersion || 0) + 1;
           await tripRef.set({
             data: {
@@ -1068,6 +1055,7 @@
             version: newVersion
           }, { merge: true });
           _localVersion = newVersion;
+          _lastSavedAt = Date.now(); // 記錄存檔時間，讓 onSnapshot 跳過自己觸發的更新
           // 寫入計數（每天重置），接近免費額度上限時警告
           const now = Date.now();
           if (now - firestoreWriteCount.lastReset > 86400000) {
@@ -1128,6 +1116,42 @@
         await nextTick();
         await nextTick(); // 雙 nextTick 確保 deep watch 也執行完
         _loadingTripData = false;
+
+        // 啟動 onSnapshot 即時監聽（先停掉舊的）
+        if (_unsubscribeSnapshot) { _unsubscribeSnapshot(); _unsubscribeSnapshot = null; }
+        if (firebaseDb && currentTripId.value) {
+          _unsubscribeSnapshot = firebaseDb.collection('trips').doc(currentTripId.value)
+            .onSnapshot(function(docSnap) {
+              if (!docSnap.exists) return;
+              const snapData = docSnap.data();
+              const snapVersion = snapData.version || 0;
+              // 只有在：1)不是我自己剛存的 2)版本比本地新 3)目前沒在存檔 4)沒在載入
+              const timeSinceLastSave = Date.now() - _lastSavedAt;
+              if (snapVersion > _localVersion && !_isSaving && !_loadingTripData && timeSinceLastSave > 2000) {
+                console.log('[即時同步] 偵測到新版本 v' + snapVersion + '，自動更新');
+                _loadingTripData = true;
+                const data2 = snapData.data || {};
+                tripConfig.value = data2.config || tripConfig.value;
+                tripDays.value = data2.days || tripDays.value;
+                itinerary.value = (data2.itinerary || []).slice();
+                itinerary.value.forEach(function(item, index) { if (item.order === undefined) item.order = index; });
+                wishlist.value = (data2.wishlist || []).slice();
+                expenses.value = (data2.expenses || []).slice();
+                expenses.value.forEach(function(e) { if (!e.involved) e.involved = []; });
+                membersInput.value = data2.members || membersInput.value;
+                members.value = membersInput.value
+                  ? membersInput.value.split(',').map(function(m) { return m.trim(); }).filter(function(m) { return m; })
+                  : members.value;
+                accommodations.value = data2.accommodations || {};
+                _localVersion = snapVersion;
+                _lastVersionCheck = Date.now();
+                nextTick(function() { nextTick(function() { _loadingTripData = false; }); });
+              }
+            }, function(err) {
+              console.warn('[即時同步] 監聽失敗:', err.message);
+            });
+        }
+
         return true;
       };
 
@@ -1334,6 +1358,8 @@
       let _isSaving = false;
       let _localVersion = null; // 本地版本號，防止舊資料覆蓋新資料
       let _lastVersionCheck = 0; // 上次版本檢查時間
+      let _unsubscribeSnapshot = null; // Firestore 即時監聽的取消函式
+      let _lastSavedAt = 0; // 上次本地存檔的時間戳
       const loadTripData = async (id) => {
         _loadingTripData = true;
         currentTripId.value = id;
@@ -1661,9 +1687,15 @@
 
       const switchTrip = async (id) => {
         if (currentTripId.value && currentTripId.value !== id) {
-          // 切換前立即存檔，清掉 debounce timer，直接等存完再切換
           if (_saveDebounceTimer) { clearTimeout(_saveDebounceTimer); _saveDebounceTimer = null; }
-          if (firebaseEnabled.value && user.value && firebaseDb && !_isSaving) {
+          if (_unsubscribeSnapshot) { _unsubscribeSnapshot(); _unsubscribeSnapshot = null; }
+          if (firebaseEnabled.value && user.value && firebaseDb) {
+            // 等待目前進行中的存檔完成，最多等 3 秒
+            let waited = 0;
+            while (_isSaving && waited < 3000) {
+              await new Promise(function(r) { setTimeout(r, 100); });
+              waited += 100;
+            }
             await saveTripToFirestore();
           } else {
             saveCurrentTripData();
